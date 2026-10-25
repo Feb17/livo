@@ -1,0 +1,327 @@
+//! libmpv 播放：mpv 解码+出声，后台线程把画面交给 GPUI。
+//! macOS 走 OpenGL → NV12 IOSurface（GPU 全程，见 mpv_gl.rs）；其他平台或 GL 不可用时走软件渲染。
+use std::ffi::{c_char, c_int, c_void, CString};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
+
+#[repr(C)]
+pub(crate) struct RenderParam {
+    pub kind: c_int,
+    pub data: *mut c_void,
+}
+
+#[link(name = "mpv")]
+extern "C" {
+    fn mpv_create() -> *mut c_void;
+    fn mpv_initialize(h: *mut c_void) -> c_int;
+    fn mpv_set_option_string(h: *mut c_void, name: *const c_char, data: *const c_char) -> c_int;
+    fn mpv_set_property_string(h: *mut c_void, name: *const c_char, data: *const c_char) -> c_int;
+    fn mpv_command(h: *mut c_void, args: *mut *const c_char) -> c_int;
+    fn mpv_get_property(h: *mut c_void, name: *const c_char, format: c_int, data: *mut c_void) -> c_int;
+    fn mpv_error_string(err: c_int) -> *const c_char;
+    fn mpv_terminate_destroy(h: *mut c_void);
+    pub(crate) fn mpv_render_context_create(res: *mut *mut c_void, h: *mut c_void, params: *mut RenderParam) -> c_int;
+    fn mpv_render_context_set_update_callback(ctx: *mut c_void, cb: Option<extern "C" fn(*mut c_void)>, cb_ctx: *mut c_void);
+    fn mpv_render_context_update(ctx: *mut c_void) -> u64;
+    pub(crate) fn mpv_render_context_render(ctx: *mut c_void, params: *mut RenderParam) -> c_int;
+    pub(crate) fn mpv_render_context_free(ctx: *mut c_void);
+}
+
+// render.h / client.h 中的常量
+pub(crate) const PARAM_API_TYPE: c_int = 1;
+const PARAM_SW_SIZE: c_int = 17;
+const PARAM_SW_FORMAT: c_int = 18;
+const PARAM_SW_STRIDE: c_int = 19;
+const PARAM_SW_POINTER: c_int = 20;
+const UPDATE_FRAME: u64 = 1;
+const FORMAT_INT64: c_int = 4;
+/// shortcut: 软件渲染整帧走 CPU，宽度封顶 1280 控制开销；只是 GL 不可用时的兜底。
+const SW_MAX_WIDTH: i64 = 1280;
+
+pub enum Frame {
+    /// 软件渲染的 BGRA 像素（alpha 已置 255），交给 gpui::RenderImage。
+    Bgra { width: u32, height: u32, bgra: Vec<u8> },
+    /// GPU 渲染好的 NV12 画面，交给 gpui::surface。
+    #[cfg(target_os = "macos")]
+    Surface(crate::mpv_gl::Nv12),
+}
+
+/// 渲染后端：在渲染线程上创建和使用，Drop 时释放 mpv 渲染上下文。
+pub(crate) trait Backend {
+    fn ctx(&self) -> *mut c_void;
+    /// 该后端配套的 hwdec：GL 可以直接用硬解纹理，软件渲染只能用 -copy。
+    fn hwdec(&self) -> &'static str;
+    /// `view` 是控件的物理像素尺寸（w<<32|h，0 表示还不知道）。
+    fn render(&mut self, mpv: &Handle, view: u64) -> Option<Frame>;
+}
+
+pub(crate) struct Handle(pub *mut c_void);
+// mpv_handle 的客户端 API 是线程安全的
+unsafe impl Send for Handle {}
+unsafe impl Sync for Handle {}
+
+pub struct Player {
+    /// 视频控件的物理像素尺寸（w<<32|h），由界面每帧写入，渲染线程按它缩放输出。
+    pub view: Arc<AtomicU64>,
+    mpv: Arc<Handle>,
+    stop: Arc<AtomicBool>,
+    wake: mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+pub(crate) fn check(code: c_int, what: &str) -> anyhow::Result<()> {
+    if code < 0 {
+        let msg = unsafe { std::ffi::CStr::from_ptr(mpv_error_string(code)) }.to_string_lossy();
+        anyhow::bail!("libmpv {what} 失败：{msg}");
+    }
+    Ok(())
+}
+
+pub(crate) fn cstr(s: &str) -> CString {
+    CString::new(s.replace('\0', "")).unwrap()
+}
+
+extern "C" fn on_update(ctx: *mut c_void) {
+    // 只能做轻量通知，不能回调 mpv
+    let _ = unsafe { &*(ctx as *const mpsc::Sender<()>) }.send(());
+}
+
+fn make_backend(mpv: &Handle) -> anyhow::Result<Box<dyn Backend>> {
+    #[cfg(target_os = "macos")]
+    match crate::mpv_gl::Gl::new(mpv.0) {
+        Ok(b) => return Ok(Box::new(b)),
+        Err(e) => eprintln!("OpenGL 渲染不可用，改用软件渲染：{e}"),
+    }
+    Ok(Box::new(Sw::new(mpv.0)?))
+}
+
+impl Player {
+    /// 按线路顺序播放 `urls`（打不开或断流时 mpv 自动切到下一条），
+    /// 帧从返回的接收端送出（满了就丢帧，只保留最新画面）。
+    /// `hw`：是否硬件解码；`buffer_mb`：网络缓冲上限（直播设置里可调）
+    pub fn new(urls: &[String], headers: &[(String, String)], hw: bool, buffer_mb: u32) -> anyhow::Result<(Player, tokio::sync::mpsc::Receiver<Frame>)> {
+        let h = unsafe { mpv_create() };
+        anyhow::ensure!(!h.is_null(), "libmpv 创建失败");
+        let header = |k: &str| headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(k)).map_or("", |(_, v)| v.as_str());
+        let (buf, back) = (format!("{}MiB", buffer_mb.max(1)), format!("{}MiB", (buffer_mb / 2).max(1)));
+        let opts = [
+            ("vo", "libmpv"),
+            ("terminal", "no"),
+            ("ytdl", "no"),
+            ("referrer", header("referer")),
+            ("user-agent", header("user-agent")),
+            // 直播用的网络默认值，同原项目 MpvOptionsService.networkDefaultOptions：小缓存 + 断流自动重连
+            ("network-timeout", "30"),
+            ("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=10"),
+            ("cache", "yes"),
+            ("demuxer-readahead-secs", "2"),
+            ("demuxer-max-bytes", &buf),
+            ("demuxer-max-back-bytes", &back),
+        ];
+        let init = || -> anyhow::Result<()> {
+            for (k, v) in opts.iter().filter(|(_, v)| !v.is_empty()) {
+                check(unsafe { mpv_set_option_string(h, cstr(k).as_ptr(), cstr(v).as_ptr()) }, k)?;
+            }
+            check(unsafe { mpv_initialize(h) }, "初始化")
+        };
+        if let Err(e) = init() {
+            unsafe { mpv_terminate_destroy(h) };
+            return Err(e);
+        }
+
+        let (wake, wake_rx) = mpsc::channel();
+        let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(1);
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let view = Arc::new(AtomicU64::new(0));
+        let mpv = Arc::new(Handle(h));
+        let cb = Handle(Box::into_raw(Box::new(wake.clone())) as *mut c_void);
+        let (mpv2, stop2, view2) = (mpv.clone(), stop.clone(), view.clone());
+        // GL 上下文必须在使用它的线程上创建，所以后端在渲染线程里建
+        let thread = std::thread::spawn(move || {
+            // 整体移入闭包（只捕获 .0 字段会丢掉 Send）
+            let cb = cb;
+            let mut backend = match make_backend(&mpv2) {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                    unsafe { drop(Box::from_raw(cb.0 as *mut mpsc::Sender<()>)) };
+                    return;
+                }
+            };
+            unsafe { mpv_render_context_set_update_callback(backend.ctx(), Some(on_update), cb.0) };
+            let _ = ready_tx.send(Ok(backend.hwdec()));
+            while wake_rx.recv().is_ok() && !stop2.load(Ordering::Relaxed) {
+                if unsafe { mpv_render_context_update(backend.ctx()) } & UPDATE_FRAME == 0 {
+                    continue;
+                }
+                let Some(frame) = backend.render(&mpv2, view2.load(Ordering::Relaxed)) else { continue };
+                if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) = frame_tx.try_send(frame) {
+                    break;
+                }
+            }
+            // 后端释放渲染上下文后不会再有回调，此时才能释放回调里用的 Sender
+            drop(backend);
+            unsafe { drop(Box::from_raw(cb.0 as *mut mpsc::Sender<()>)) };
+        });
+
+        let player = Player { view, mpv, stop, wake, thread: Some(thread) };
+        let hwdec = ready_rx.recv().map_err(|_| anyhow::anyhow!("渲染线程意外退出"))??;
+        let hwdec = if hw { hwdec } else { "no" };
+        check(unsafe { mpv_set_option_string(h, cstr("hwdec").as_ptr(), cstr(hwdec).as_ptr()) }, "hwdec")?;
+        let (load, append) = (cstr("loadfile"), cstr("append-play"));
+        for url in urls {
+            let url = cstr(url);
+            let mut cmd = [load.as_ptr(), url.as_ptr(), append.as_ptr(), std::ptr::null()];
+            check(unsafe { mpv_command(player.mpv.0, cmd.as_mut_ptr()) }, "加载")?;
+        }
+        Ok((player, frame_rx))
+    }
+}
+
+impl Player {
+    /// 音量 0-100；静音单独控制，取消静音后恢复原音量
+    pub fn set_volume(&self, volume: u8, muted: bool) {
+        unsafe {
+            mpv_set_property_string(self.mpv.0, cstr("volume").as_ptr(), cstr(&volume.min(100).to_string()).as_ptr());
+            mpv_set_property_string(self.mpv.0, cstr("mute").as_ptr(), cstr(if muted { "yes" } else { "no" }).as_ptr());
+        }
+    }
+}
+
+pub(crate) fn prop(mpv: &Handle, name: &str) -> i64 {
+    let mut v = 0i64;
+    unsafe { mpv_get_property(mpv.0, cstr(name).as_ptr(), FORMAT_INT64, &mut v as *mut i64 as *mut c_void) };
+    v
+}
+
+/// 输出尺寸：按视频比例缩到控件以内（不放大），宽度再受 `max_w` 限制。
+fn fit(dw: i64, dh: i64, view: u64, max_w: i64) -> (i64, i64) {
+    let (vw, vh) = ((view >> 32) as i64, (view & 0xFFFF_FFFF) as i64);
+    let mut w = dw.min(max_w);
+    if vw > 0 && vh > 0 {
+        w = w.min(vw).min(vh * dw / dh);
+    }
+    let w = w.max(16);
+    (w, (dh * w / dw).max(2))
+}
+
+/// 当前视频的输出尺寸；还没解出画面时返回 None。
+pub(crate) fn target_size(mpv: &Handle, view: u64, max_w: i64) -> Option<(i64, i64)> {
+    let (dw, dh) = (prop(mpv, "dwidth"), prop(mpv, "dheight"));
+    (dw > 0 && dh > 0).then(|| fit(dw, dh, view, max_w))
+}
+
+struct Sw(*mut c_void);
+
+impl Sw {
+    fn new(mpv: *mut c_void) -> anyhow::Result<Self> {
+        let mut ctx = std::ptr::null_mut();
+        let sw = cstr("sw");
+        let mut params = [RenderParam { kind: PARAM_API_TYPE, data: sw.as_ptr() as *mut c_void }, RenderParam { kind: 0, data: std::ptr::null_mut() }];
+        check(unsafe { mpv_render_context_create(&mut ctx, mpv, params.as_mut_ptr()) }, "创建渲染上下文")?;
+        Ok(Sw(ctx))
+    }
+}
+
+impl Drop for Sw {
+    fn drop(&mut self) {
+        unsafe { mpv_render_context_free(self.0) };
+    }
+}
+
+impl Backend for Sw {
+    fn ctx(&self) -> *mut c_void {
+        self.0
+    }
+
+    fn hwdec(&self) -> &'static str {
+        "auto-copy-safe"
+    }
+
+    fn render(&mut self, mpv: &Handle, view: u64) -> Option<Frame> {
+        let (tw, th) = target_size(mpv, view, SW_MAX_WIDTH)?;
+        // 宽取 16 的倍数，stride 即为 64 的倍数（mpv 要求的快速路径）
+        let w = (tw / 16 * 16).max(16);
+        let h = (th * w / tw).max(1);
+        let mut size = [w as c_int, h as c_int];
+        let mut stride = w as usize * 4;
+        let mut bgra = vec![0u8; stride * h as usize];
+        let fmt = cstr("bgr0");
+        let mut params = [
+            RenderParam { kind: PARAM_SW_SIZE, data: size.as_mut_ptr() as *mut c_void },
+            RenderParam { kind: PARAM_SW_FORMAT, data: fmt.as_ptr() as *mut c_void },
+            RenderParam { kind: PARAM_SW_STRIDE, data: &mut stride as *mut usize as *mut c_void },
+            RenderParam { kind: PARAM_SW_POINTER, data: bgra.as_mut_ptr() as *mut c_void },
+            RenderParam { kind: 0, data: std::ptr::null_mut() },
+        ];
+        if unsafe { mpv_render_context_render(self.0, params.as_mut_ptr()) } < 0 {
+            return None;
+        }
+        // bgr0 的第 4 字节是未定义值，GPUI 按 BGRA 混合，必须置为不透明
+        bgra.iter_mut().skip(3).step_by(4).for_each(|a| *a = 255);
+        Some(Frame::Bgra { width: w as u32, height: h as u32, bgra })
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = self.wake.send(());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        // 渲染上下文已在线程里释放，之后才能销毁 core
+        unsafe { mpv_terminate_destroy(self.mpv.0) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 用 lavfi 生成黑底、左上角白块的画面，不依赖网络；同时校验方向。
+    #[test]
+    fn renders_test_source() {
+        let src = "av://lavfi:color=c=black:s=640x360:r=30,drawbox=x=0:y=0:w=320:h=90:color=white:t=fill";
+        let (_p, mut rx) = Player::new(&[src.into()], &[], true, 16).unwrap();
+        match rx.blocking_recv().expect("frame") {
+            Frame::Bgra { width, height, bgra } => {
+                assert_eq!((width, height), (640, 360));
+                let px = |x: usize, y: usize| bgra[(y * 640 + x) * 4];
+                assert!(px(10, 10) > 230 && px(10, 350) < 25, "方向或亮度不对");
+                assert!(bgra.chunks(4).all(|p| p[3] == 255));
+            }
+            #[cfg(target_os = "macos")]
+            Frame::Surface(s) => s.assert_test_source(640, 360),
+        }
+    }
+
+    #[test]
+    fn fit_shrinks_to_view_keeping_aspect() {
+        let view = |w: u64, h: u64| w << 32 | h;
+        assert_eq!(fit(3840, 2160, 0, 3840), (3840, 2160)); // 尺寸未知：按源
+        assert_eq!(fit(3840, 2160, view(800, 600), 3840), (800, 450)); // 宽受限
+        assert_eq!(fit(3840, 2160, view(1600, 450), 3840), (800, 450)); // 高受限
+        assert_eq!(fit(1280, 720, view(2560, 1440), 3840), (1280, 720)); // 不放大
+        assert_eq!(fit(1920, 1080, view(2560, 1440), 1280), (1280, 720)); // max_w 封顶
+    }
+
+    /// 真实直播流（需要网络）：cargo test -p simple_live_gpui -- --ignored
+    #[test]
+    #[ignore]
+    fn plays_live_streams() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        for site in simple_live_core::Site::all() {
+            let pu = rt.block_on(async {
+                let r = site.recommend_rooms(1).await?;
+                let q = site.play_qualities(&r.items[0].room_id).await?;
+                site.play_urls(&r.items[0].room_id, q[0].qn).await
+            });
+            let pu = pu.unwrap();
+            let (_p, mut rx) = Player::new(&pu.urls, &pu.headers, true, 16).unwrap();
+            let f = rt.block_on(async { tokio::time::timeout(std::time::Duration::from_secs(15), rx.recv()).await });
+            assert!(matches!(f, Ok(Some(_))), "{} 15 秒内没有画面", site.name());
+        }
+    }
+}

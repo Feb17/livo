@@ -1,0 +1,125 @@
+# 发版：Windows x64 portable 包 + macOS Apple silicon dmg（参考原项目的 publish_app_release_*）
+# - 推送 v* 标签：构建并发布到对应的 GitHub Release
+# - 手动运行：构建指定 ref，产物上传到 Actions；ref 是标签且勾选 upload_release 时也发布
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的 Git ref，例如 master 或 v0.1.0"
+        required: false
+        default: "master"
+      upload_release:
+        description: "ref 是标签时，把产物上传到对应的 GitHub Release"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  REF: ${{ inputs.ref || github.ref }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      is_tag: ${{ steps.v.outputs.is_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - id: v
+        shell: bash
+        run: |
+          ref="${REF#refs/tags/}"
+          if [[ "$ref" == v* ]]; then
+            echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(grep -m1 '^version' app/Cargo.toml | cut -d'"' -f2)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 下载 libmpv 开发包
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # shinchiro/mpv-winbuild-cmake 的每日构建，取最新的 x86_64 开发包（不要 v3/AVX2 变体，兼容老 CPU）
+          $asset = gh release view --repo shinchiro/mpv-winbuild-cmake --json assets --jq '.assets[].name' | Where-Object { $_ -match '^mpv-dev-x86_64-\d{8}-git-.+\.7z$' } | Select-Object -First 1
+          if (-not $asset) { throw "没有找到 mpv-dev-x86_64 开发包" }
+          Write-Host "使用 $asset"
+          gh release download --repo shinchiro/mpv-winbuild-cmake --pattern $asset --output mpv-dev.7z
+          7z x mpv-dev.7z -ompv | Out-Null
+          # MSVC 链接器可以直接使用 MinGW 的导入库，改名成 #[link(name = "mpv")] 要找的 mpv.lib
+          Copy-Item mpv/libmpv.dll.a mpv/mpv.lib
+          "MPV_LIB_DIR=$pwd\mpv" >> $env:GITHUB_ENV
+
+      - name: 构建
+        run: cargo build --release -p simple_live_gpui
+
+      - name: 打包 portable
+        shell: pwsh
+        run: |
+          $name = "SimpleLive-Windows-x64-v${{ needs.version.outputs.version }}-portable"
+          New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
+          Copy-Item target/release/simple_live_gpui.exe "dist/$name/SimpleLive.exe"
+          Copy-Item mpv/libmpv-2.dll "dist/$name/"
+          Copy-Item LICENSE "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+
+  build-macos:
+    needs: version
+    runs-on: macos-15 # Apple silicon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 安装 libmpv 与打包工具
+        run: brew install mpv dylibbundler
+
+      - name: 构建并打包 dmg
+        run: scripts/bundle-macos.sh "${{ needs.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+
+  release:
+    needs: [version, build-windows, build-macos]
+    if: needs.version.outputs.is_tag == 'true' && (github.event_name == 'push' || inputs.upload_release)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          files: artifacts/**/*
+          generate_release_notes: true
