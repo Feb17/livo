@@ -10,8 +10,8 @@ mod store;
 mod mpv_gl;
 
 use gpui::{
-    canvas, div, image_cache, img, relative, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
-    HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, RetainAllImageCache, Rgba, ScrollHandle, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    canvas, div, image_cache, img, list, relative, AnyElement, ShapedLine, ListAlignment, ListState, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
+    HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, RetainAllImageCache, Rgba, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use icons::icon;
 use simple_live_core::{danmaku, Category, LiveMessage, PlayQuality, RoomDetail, RoomItem, RoomPage, Site, SubCategory};
@@ -71,7 +71,8 @@ const DM_GAP: f32 = 24.;
 
 fn rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
-    RT.get_or_init(|| Runtime::new().expect("tokio runtime"))
+    // 只跑网络请求和弹幕连接，两个线程足够；默认每个核一个线程
+    RT.get_or_init(|| tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("tokio runtime"))
 }
 
 fn tint(color: u32, alpha: u8) -> Rgba {
@@ -189,6 +190,8 @@ struct Bullet {
     lane: usize,
     start: Instant,
     width: f32,
+    /// 第一次绘制时排好的（正文, 阴影），之后每帧只换位置重画，不再排版
+    shaped: Option<(ShapedLine, ShapedLine)>,
 }
 
 /// 当前视频帧：软件渲染的图要进纹理图集，macOS GPU 渲染直接是 IOSurface。
@@ -215,6 +218,9 @@ struct Video {
     size: Rc<Cell<(f32, f32)>>,
     /// 直播设置里的画面尺寸（见 fit_of）
     fit: u8,
+    /// 本轮播放开始的时刻和最近一帧到达的时刻，给断流看门狗用
+    playing_since: Option<Instant>,
+    last_frame: Option<Instant>,
 }
 
 impl Video {
@@ -233,26 +239,51 @@ impl Video {
         let width = text.chars().map(|c| if c as u32 >= 0x2E80 { st.font } else { st.font * 0.55 }).sum::<f32>();
         // 匀速前进，前一条尾巴离开右边缘一段距离后这条弹道才可用，所以不会追尾
         self.lanes[lane] = now + Duration::from_secs_f32((width + DM_GAP) / (w / st.secs));
-        self.bullets.push(Bullet { text: text.into(), color, lane, start: now, width });
+        self.bullets.push(Bullet { text: text.into(), color, lane, start: now, width, shaped: None });
     }
 
-    fn render_bullets(&mut self) -> impl IntoElement {
+    /// 满屏弹幕时每条都做成元素会让每帧的布局和排版吃掉大半主线程，所以直接在一个 canvas 上画排好的字
+    fn render_bullets(&mut self, window: &mut Window) -> impl IntoElement {
         let (w, _) = self.size.get();
         let st = self.style;
         let (now, speed) = (Instant::now(), w / st.secs);
         let x_of = |b: &Bullet| w - now.duration_since(b.start).as_secs_f32() * speed;
         self.bullets.retain(|b| x_of(b) + b.width > 0.);
-        // 没有描边能力，先画一层偏移的半透明黑字当阴影
-        div().absolute().top_0().left_0().size_full().overflow_hidden().opacity(st.opacity).children(self.bullets.iter().flat_map(|b| {
-            let (x, y) = (x_of(b), 8. + b.lane as f32 * st.font * 1.5);
-            [(x + 1., y + 1., tint(0x000000, 0xb0)), (x, y, rgb(b.color))]
-                .map(|(x, y, c)| div().absolute().left(px(x)).top(px(y)).whitespace_nowrap().text_size(px(st.font)).font_weight(FontWeight::MEDIUM).text_color(c).child(b.text.clone()))
-        }))
+        let font = gpui::Font { weight: FontWeight::MEDIUM, ..window.text_style().font() };
+        let lines: Vec<_> = self
+            .bullets
+            .iter_mut()
+            .map(|b| {
+                if b.shaped.is_none() {
+                    let shape = |color: Rgba| {
+                        let run = gpui::TextRun { len: b.text.len(), font: font.clone(), color: color.into(), background_color: None, underline: None, strikethrough: None };
+                        window.text_system().shape_line(b.text.clone(), px(st.font), &[run], None)
+                    };
+                    // 没有描边能力，先画一层偏移的半透明黑字当阴影
+                    b.shaped = Some((shape(rgb(b.color)), shape(tint(0x000000, 0xb0))));
+                }
+                (point(px(x_of(b)), px(8. + b.lane as f32 * st.font * 1.5)), b.shaped.clone().unwrap())
+            })
+            .collect();
+        let line_height = px(st.font * 1.3);
+        div().absolute().top_0().left_0().size_full().overflow_hidden().opacity(st.opacity).child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, cx| {
+                    for (pos, (text, shadow)) in &lines {
+                        let at = bounds.origin + *pos;
+                        shadow.paint(at + point(px(1.), px(1.)), line_height, window, cx).ok();
+                        text.paint(at, line_height, window, cx).ok();
+                    }
+                },
+            )
+            .size_full(),
+        )
     }
 }
 
 impl Render for Video {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mut screen = div().relative().size_full().bg(rgb(0x000000)).flex().items_center().justify_center();
         if let Some(view) = self.view.clone() {
             let size = self.size.clone();
@@ -281,7 +312,7 @@ impl Render for Video {
         };
         // 视频帧每到一帧就重绘一次，弹幕位置随之前进
         let show = self.overlay && self.view.is_some();
-        screen.children(show.then(|| self.render_bullets()))
+        screen.children(show.then(|| self.render_bullets(window)))
     }
 }
 
@@ -326,6 +357,8 @@ struct SimpleLive {
     login: Option<Login>,
     /// 递增代号：切换页面/房间后丢弃过期的异步结果与弹幕
     epoch: u64,
+    /// 断流看门狗连续重试的次数，出画面后清零
+    stall_retries: u8,
     /// 浏览页的封面/分类图。GPUI 默认的图片缓存只增不减（内存 + 显存各一份），
     /// 所以浏览页用自己的缓存，换页面或进直播间时整个换掉，旧图随之释放
     images: Entity<RetainAllImageCache>,
@@ -380,6 +413,7 @@ impl SimpleLive {
             last_follow_refresh: Instant::now(),
             login: None,
             epoch: 0,
+            stall_retries: 0,
         };
         // 主页设置里排第一的页面是启动页
         let first = s.store.home_sort.iter().find_map(|id| Tab::from_id(id)).unwrap_or(Tab::Recommend);
@@ -399,7 +433,44 @@ impl SimpleLive {
             }
         })
         .detach();
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(3)).await;
+            if this.update(cx, |this, cx| this.check_stall(cx)).is_err() {
+                break;
+            }
+        })
+        .detach();
         s
+    }
+
+    /// 断流看门狗（参照原项目）：所有线路都断了，或者 10 秒没有新画面（刚开始缓冲时放宽到 30 秒），就重新取地址再播，
+    /// 斗鱼/虎牙的地址几分钟就过期，断开后只能重新签名。连续 3 次没恢复就暂停并提示，免得没完没了地重试
+    fn check_stall(&mut self, cx: &mut Context<Self>) {
+        let Some(player) = self.room.as_ref().and_then(|r| r.player.as_ref()) else { return };
+        let v = self.video.read(cx);
+        let (Some(since), last) = (v.playing_since, v.last_frame) else { return };
+        let stalled = player.idle()
+            || match last {
+                Some(t) => t.elapsed() > Duration::from_secs(10),
+                None => since.elapsed() > Duration::from_secs(30),
+            };
+        if !stalled {
+            if last.is_some() {
+                self.stall_retries = 0;
+            }
+            return;
+        }
+        if self.stall_retries >= 3 {
+            self.error = Some("直播流中断，自动重试 3 次仍未恢复，稍后可以点刷新再试".into());
+            return self.play(cx); // 播放中调用 play 是暂停
+        }
+        self.stall_retries += 1;
+        // 先停掉旧播放器，免得取新地址期间它还在空转，看门狗也不会重复触发
+        if let Some(room) = self.room.as_mut() {
+            room.player = None;
+            let idx = room.quality_idx;
+            self.choose_quality(idx, cx);
+        }
     }
 
     fn site(&self) -> Arc<Site> {
@@ -475,6 +546,8 @@ impl SimpleLive {
                 self.video.update(cx, |v, cx| {
                     v.view = Some(view.clone());
                     v.bullets.clear();
+                    v.playing_since = Some(Instant::now());
+                    v.last_frame = None;
                     cx.notify()
                 });
                 let video = self.video.downgrade();
@@ -496,6 +569,7 @@ impl SimpleLive {
                                 last = Some(img.clone());
                             }
                             v.frame = Some(frame);
+                            v.last_frame = Some(Instant::now());
                             if let Some(old) = old {
                                 cx.drop_image(old, None);
                             }
@@ -626,8 +700,9 @@ impl SimpleLive {
                 let _ = danmaku::run(args, tx).await;
             });
             let id = this.epoch;
-            let chat = cx.new(|_| Chat { messages: vec![], scroll: ScrollHandle::new(), accent: this.accent() });
+            let chat = cx.new(|_| Chat { messages: vec![], list: ListState::new(0, ListAlignment::Bottom, px(200.)).measure_all(), accent: this.accent() });
             this.menu = None;
+            this.stall_retries = 0;
             this.room = Some(Room { id, online: detail.online, detail, chat, qualities, quality_idx, line_idx: 0, urls: urls.urls, headers: urls.headers, player: None, danmaku_task });
             this.play(cx);
             cx.spawn(async move |this, cx| {
@@ -932,7 +1007,9 @@ impl SimpleLive {
 /// 弹幕面板单独一个 entity 并按缓存渲染：视频每帧重绘时直接复用上一帧的排版。
 struct Chat {
     messages: Vec<Msg>,
-    scroll: ScrollHandle,
+    /// 只绘制看得见的几行；底部对齐：停在最底部时跟随新弹幕，往上翻看时不打扰。
+    /// 要 measure_all，否则没测过高度的旧消息按 0 算，往上能翻的范围只有可见的几行
+    list: ListState,
     accent: u32,
 }
 
@@ -945,27 +1022,25 @@ impl Chat {
             }
             LiveMessage::SuperChat { user, text, price } => Msg { color: name_color(&user), user: user.into(), text: text.into(), price: Some(price) },
         };
-        // 用户往上翻看历史时不强行拉回底部
-        let at_bottom = -self.scroll.offset().y >= self.scroll.max_offset().height - px(24.);
+        let n = self.messages.len();
         self.messages.push(msg);
+        self.list.splice(n..n, 1);
         if self.messages.len() > MAX_DANMAKU {
             self.messages.drain(..MAX_DANMAKU / 4);
-        }
-        if at_bottom {
-            self.scroll.scroll_to_bottom();
+            self.list.splice(0..MAX_DANMAKU / 4, 0);
         }
         cx.notify();
     }
-}
 
-impl Render for Chat {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let accent = self.accent;
-        let messages = self.messages.iter().map(|m| {
-            let line = format!("{}  {}", m.user, m.text);
-            let name = 0..m.user.len();
-            let styled = StyledText::new(line).with_highlights([(name, HighlightStyle { color: Some(rgb(m.color).into()), font_weight: Some(FontWeight::MEDIUM), ..Default::default() })]);
-            match m.price {
+    fn row(&self, ix: usize) -> AnyElement {
+        let (m, accent) = (&self.messages[ix], self.accent);
+        let line = format!("{}  {}", m.user, m.text);
+        let name = 0..m.user.len();
+        let styled = StyledText::new(line).with_highlights([(name, HighlightStyle { color: Some(rgb(m.color).into()), font_weight: Some(FontWeight::MEDIUM), ..Default::default() })]);
+        // list 不支持 gap，用每行的下边距代替
+        div()
+            .pb_1()
+            .child(match m.price {
                 Some(price) => div()
                     .p_2p5()
                     .rounded_lg()
@@ -978,8 +1053,14 @@ impl Render for Chat {
                     .child(div().flex().justify_between().text_xs().child(div().font_weight(FontWeight::MEDIUM).text_color(rgb(accent)).child(m.user.clone())).child(div().px_1p5().rounded_sm().bg(rgb(accent)).text_color(rgb(0x111111)).child(format!("¥{price}"))))
                     .child(div().text_sm().child(m.text.clone())),
                 None => div().px_1().py_0p5().text_sm().text_color(rgb(text())).child(styled),
-            }
-        });
+            })
+            .into_any_element()
+    }
+}
+
+impl Render for Chat {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let chat = cx.entity();
         div()
             .size_full()
             .flex()
@@ -1003,9 +1084,9 @@ impl Render for Chat {
                     .child(div().flex().items_center().gap_1p5().text_xs().text_color(rgb(muted())).child(div().size(px(6.)).rounded_full().bg(rgb(0x2ed573))).child("实时")),
             )
             .child(if self.messages.is_empty() {
-                div().id("chat").flex_1().flex().items_center().justify_center().text_sm().text_color(rgb(subtle())).child("等待弹幕…")
+                div().id("chat").flex_1().flex().items_center().justify_center().text_sm().text_color(rgb(subtle())).child("等待弹幕…").into_any_element()
             } else {
-                div().id("chat").flex_1().overflow_y_scroll().track_scroll(&self.scroll).p_3().flex().flex_col().gap_1().children(messages)
+                list(self.list.clone(), move |ix, _, cx| chat.read(cx).row(ix)).flex_1().w_full().p_3().into_any_element()
             })
     }
 }

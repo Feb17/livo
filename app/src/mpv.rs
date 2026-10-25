@@ -34,6 +34,7 @@ const PARAM_SW_FORMAT: c_int = 18;
 const PARAM_SW_STRIDE: c_int = 19;
 const PARAM_SW_POINTER: c_int = 20;
 const UPDATE_FRAME: u64 = 1;
+const FORMAT_FLAG: c_int = 3;
 const FORMAT_INT64: c_int = 4;
 /// shortcut: 软件渲染整帧走 CPU，宽度封顶 1280 控制开销；只是 GL 不可用时的兜底。
 const SW_MAX_WIDTH: i64 = 1280;
@@ -68,6 +69,8 @@ pub struct Player {
     wake: mpsc::Sender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
+
+const MPV_ERROR_OPTION_NOT_FOUND: c_int = -5;
 
 pub(crate) fn check(code: c_int, what: &str) -> anyhow::Result<()> {
     if code < 0 {
@@ -110,9 +113,11 @@ impl Player {
             ("ytdl", "no"),
             ("referrer", header("referer")),
             ("user-agent", header("user-agent")),
-            // 直播用的网络默认值，同原项目 MpvOptionsService.networkDefaultOptions：小缓存 + 断流自动重连
+            // 直播用的网络默认值，参照原项目 MpvOptionsService.networkDefaultOptions，但不开 reconnect_streamed：
+            // 斗鱼/虎牙的地址几分钟就过期，断开后拿旧地址重连只会每秒重连几次、每次重新握手，画面也只剩碎片。
+            // 断了就让这条线路结束，换下一条；都断了由界面的断流看门狗重新取地址
             ("network-timeout", "30"),
-            ("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=10"),
+            ("stream-lavf-o", "reconnect=1,reconnect_on_network_error=1,reconnect_delay_max=10"),
             ("cache", "yes"),
             ("demuxer-readahead-secs", "2"),
             ("demuxer-max-bytes", &buf),
@@ -120,7 +125,11 @@ impl Player {
         ];
         let init = || -> anyhow::Result<()> {
             for (k, v) in opts.iter().filter(|(_, v)| !v.is_empty()) {
-                check(unsafe { mpv_set_option_string(h, cstr(k).as_ptr(), cstr(v).as_ptr()) }, k)?;
+                let code = unsafe { mpv_set_option_string(h, cstr(k).as_ptr(), cstr(v).as_ptr()) };
+                // 精简版 libmpv 没编 Lua，ytdl 之类的选项不存在，跳过即可
+                if code != MPV_ERROR_OPTION_NOT_FOUND {
+                    check(code, k)?;
+                }
             }
             // mpv 默认的高质量缩放会按片源分辨率开 rgba16f 中间帧，4K 直播多占约 100MB 显存，直播画面用 fast 档足够。
             // 老版本 libmpv 没有这个档，失败就忽略
@@ -183,6 +192,13 @@ impl Player {
 }
 
 impl Player {
+    /// 所有线路都播完/断开了
+    pub fn idle(&self) -> bool {
+        let mut v: c_int = 0;
+        unsafe { mpv_get_property(self.mpv.0, cstr("idle-active").as_ptr(), FORMAT_FLAG, &mut v as *mut c_int as *mut c_void) };
+        v != 0
+    }
+
     /// 音量 0-100；静音单独控制，取消静音后恢复原音量
     pub fn set_volume(&self, volume: u8, muted: bool) {
         unsafe {

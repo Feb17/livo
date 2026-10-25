@@ -1,5 +1,6 @@
-# 发版：Windows x64 portable 包 + macOS Apple silicon dmg（参考原项目的 publish_app_release_*）
-# - 推送 v* 标签：构建并发布到对应的 GitHub Release
+# 发版：Windows x64 portable 包 + macOS Apple silicon dmg（参考 SlotSun/dart_simple_live 的 publish_app_release）
+# - 推送 v* 标签：构建并发布到对应的 GitHub Release。标题、更新说明、是否预发行都读 app_version.json，
+#   发版前先改好它并提交；标签和文件里的版本号不一致会直接失败
 # - 手动运行：构建指定 ref，产物上传到 Actions；ref 是标签且勾选 upload_release 时也发布
 name: release
 
@@ -42,6 +43,11 @@ jobs:
         run: |
           ref="${REF#refs/tags/}"
           if [[ "$ref" == v* ]]; then
+            file=$(jq -r .version app_version.json)
+            if [[ "$file" != "${ref#v}" ]]; then
+              echo "::error::标签 $ref 与 app_version.json 里的版本 $file 不一致"
+              exit 1
+            fi
             echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
             echo "is_tag=true" >> "$GITHUB_OUTPUT"
           else
@@ -102,9 +108,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: 安装 libmpv 与打包工具
-        run: brew install mpv dylibbundler
-
+      # 脚本自己下载 media-kit 的精简版 libmpv，不再需要 Homebrew 的 mpv
       - name: 构建并打包 dmg
         run: scripts/bundle-macos.sh "${{ needs.version.outputs.version }}"
 
@@ -120,11 +124,23 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          sparse-checkout: app_version.json
+          sparse-checkout-cone-mode: false
+      - name: 读取更新说明
+        id: meta
+        run: |
+          echo "prerelease=$(jq -r .prerelease app_version.json)" >> "$GITHUB_OUTPUT"
+          jq -r .version_desc app_version.json > notes.md
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}
+          name: ${{ needs.version.outputs.version }}
+          body_path: notes.md
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           files: artifacts/**/*
-          generate_release_notes: true

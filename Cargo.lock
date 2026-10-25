@@ -5108,7 +5108,7 @@ dependencies = [
 
 [[package]]
 name = "simple_live_gpui"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.0",

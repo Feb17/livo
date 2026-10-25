@@ -1,6 +1,7 @@
 #!/bin/bash
 # 打包 macOS（Apple silicon）：Simple Live.app + dmg
-# 依赖：Homebrew 的 mpv（提供 libmpv）和 dylibbundler（把 libmpv 及其依赖拷进包内并改写加载路径）
+# libmpv 用 media-kit 的精简版（原项目 macOS 也用它）：只编了直播用到的解码器和协议，
+# 比 Homebrew 的 mpv 连同依赖小一半多（包内库 58MB → 20MB）。首次运行会下载并校验
 # 用法：scripts/bundle-macos.sh [版本号]   产物在 dist/
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -10,7 +11,18 @@ VERSION="${VERSION#v}"
 APP="dist/Simple Live.app"
 DMG="dist/SimpleLive-macOS-arm64-v${VERSION}.dmg"
 
-cargo build --release -p simple_live_gpui
+LIBMPV_VER=v0.7.3
+LIBMPV_PKG="libmpv-libs_${LIBMPV_VER}_macos-arm64-video-default"
+LIBMPV_SHA256=9137a736c97dd8429a51b2dbbf061b69e879b0b69dc88b9d3a200d2354166af5
+LIBMPV_DIR="$PWD/target/libmpv/$LIBMPV_PKG"
+if [ ! -d "$LIBMPV_DIR" ]; then
+  mkdir -p target/libmpv
+  curl -fsSL -o "target/libmpv/$LIBMPV_PKG.tar.gz" "https://github.com/media-kit/libmpv-darwin-build/releases/download/$LIBMPV_VER/$LIBMPV_PKG.tar.gz"
+  echo "$LIBMPV_SHA256  target/libmpv/$LIBMPV_PKG.tar.gz" | shasum -a 256 -c -
+  tar -xzf "target/libmpv/$LIBMPV_PKG.tar.gz" -C target/libmpv
+fi
+
+MPV_LIB_DIR="$LIBMPV_DIR" cargo build --release -p simple_live_gpui
 
 rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp target/release/simple_live_gpui "$APP/Contents/MacOS/"
@@ -34,19 +46,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 把 libmpv 及其全部依赖拷进 Frameworks，并把加载路径改成包内相对路径
-# -ns：不让它逐个签名（带扩展属性的文件会签名失败），下面统一处理
-dylibbundler -od -b -cd -ns -x "$APP/Contents/MacOS/simple_live_gpui" -d "$APP/Contents/Frameworks" -p @executable_path/../Frameworks/
+# 这套库之间都用 @rpath 互相引用，拷进 Frameworks 再给主程序加一条 rpath 即可
+cp "$LIBMPV_DIR"/*.dylib "$APP/Contents/Frameworks/"
+install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/simple_live_gpui"
 
-# dylibbundler 会重复写入同一条 LC_RPATH，新版 dyld 遇到重复 rpath 直接拒绝加载，删到只剩一条
-rpaths() { otool -l "$1" | awk '/cmd LC_RPATH/{getline; getline; print $2}'; }
-for f in "$APP/Contents/MacOS/simple_live_gpui" "$APP"/Contents/Frameworks/*.dylib; do
-  for rp in $(rpaths "$f" | sort | uniq -d); do
-    while [ "$(rpaths "$f" | grep -cxF "$rp")" -gt 1 ]; do install_name_tool -delete_rpath "$rp" "$f"; done
-  done
-done
-
-# 改写过的二进制签名已失效；Apple silicon 上未签名的代码无法运行。
+# 加 rpath 后二进制签名已失效；Apple silicon 上未签名的代码无法运行。
 # 先清掉扩展属性（否则 codesign 报 “resource fork … not allowed”），再统一做 ad-hoc 签名
 xattr -cr "$APP"
 codesign --force --deep --sign - "$APP"
