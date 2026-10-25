@@ -10,8 +10,8 @@ mod store;
 mod mpv_gl;
 
 use gpui::{
-    canvas, div, img, relative, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
-    HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, Rgba, ScrollHandle, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    canvas, div, image_cache, img, relative, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
+    HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, RetainAllImageCache, Rgba, ScrollHandle, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use icons::icon;
 use simple_live_core::{danmaku, Category, LiveMessage, PlayQuality, RoomDetail, RoomItem, RoomPage, Site, SubCategory};
@@ -326,6 +326,9 @@ struct SimpleLive {
     login: Option<Login>,
     /// 递增代号：切换页面/房间后丢弃过期的异步结果与弹幕
     epoch: u64,
+    /// 浏览页的封面/分类图。GPUI 默认的图片缓存只增不减（内存 + 显存各一份），
+    /// 所以浏览页用自己的缓存，换页面或进直播间时整个换掉，旧图随之释放
+    images: Entity<RetainAllImageCache>,
 }
 
 impl SimpleLive {
@@ -368,6 +371,7 @@ impl SimpleLive {
             sliders: Default::default(),
             store,
             follow_list: vec![],
+            images: RetainAllImageCache::new(cx),
             marked: None,
             capturing: None,
             show_chat: true,
@@ -420,6 +424,7 @@ impl SimpleLive {
     /// 切到某个页面（侧边栏导航）
     fn go(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.room = None;
+        self.images = RetainAllImageCache::new(cx);
         self.tab = tab;
         if tab.is_site_page() {
             self.site_tab = tab;
@@ -553,6 +558,7 @@ impl SimpleLive {
     }
 
     fn load_rooms(&mut self, source: Source, cx: &mut Context<Self>) {
+        self.images = RetainAllImageCache::new(cx);
         self.source = source;
         self.rooms.clear();
         self.page = 0;
@@ -603,6 +609,8 @@ impl SimpleLive {
             let site = this.site().id().to_string();
             this.store.record(History { site, room_id: detail.room_id.clone(), user_name: detail.user_name.clone(), face: detail.user_avatar.clone(), title: detail.title.clone(), cover: detail.cover.clone(), time: now });
             this.store.save();
+            // 直播间里看不到浏览页，先把它的图片放掉；退出时重新加载
+            this.images = RetainAllImageCache::new(cx);
             this.pending_fullscreen = this.store.live.auto_fullscreen;
             // 直播设置/弹幕设置在每次进入直播间时生效
             let (fit, dm) = (this.store.live.fit, this.store.danmaku.enabled);
@@ -1278,7 +1286,7 @@ impl SimpleLive {
             Tab::Settings => self.render_settings(cx).into_any_element(),
             _ => self.render_grid(content_w - 2. * PAD, cx).into_any_element(),
         };
-        div()
+        image_cache(self.images.clone())
             .size_full()
             .flex()
             .flex_col()

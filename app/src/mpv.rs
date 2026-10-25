@@ -122,6 +122,9 @@ impl Player {
             for (k, v) in opts.iter().filter(|(_, v)| !v.is_empty()) {
                 check(unsafe { mpv_set_option_string(h, cstr(k).as_ptr(), cstr(v).as_ptr()) }, k)?;
             }
+            // mpv 默认的高质量缩放会按片源分辨率开 rgba16f 中间帧，4K 直播多占约 100MB 显存，直播画面用 fast 档足够。
+            // 老版本 libmpv 没有这个档，失败就忽略
+            unsafe { mpv_set_option_string(h, cstr("profile").as_ptr(), cstr("fast").as_ptr()) };
             check(unsafe { mpv_initialize(h) }, "初始化")
         };
         if let Err(e) = init() {
