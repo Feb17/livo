@@ -69,6 +69,14 @@ const MAX_DANMAKU: usize = 200;
 /// 滚动弹幕同一弹道前后两条的间距
 const DM_GAP: f32 = 24.;
 
+/// 断流：所有线路都断开了，或者 10 秒没有新画面；还没出过画面时放宽到 30 秒，留给首次缓冲
+fn is_stalled(idle: bool, since: Instant, last_frame: Option<Instant>, now: Instant) -> bool {
+    idle || match last_frame {
+        Some(t) => now.duration_since(t) > Duration::from_secs(10),
+        None => now.duration_since(since) > Duration::from_secs(30),
+    }
+}
+
 fn rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     // 只跑网络请求和弹幕连接，两个线程足够；默认每个核一个线程
@@ -443,18 +451,17 @@ impl SimpleLive {
         s
     }
 
-    /// 断流看门狗（参照原项目）：所有线路都断了，或者 10 秒没有新画面（刚开始缓冲时放宽到 30 秒），就重新取地址再播，
-    /// 斗鱼/虎牙的地址几分钟就过期，断开后只能重新签名。连续 3 次没恢复就暂停并提示，免得没完没了地重试
+    /// 断流看门狗（参照原项目）：断流（见 is_stalled）就重新取地址再播，斗鱼/虎牙的地址几分钟就过期，断开后只能重新签名。
+    /// 连续 3 次没恢复就暂停并提示，免得没完没了地重试
     fn check_stall(&mut self, cx: &mut Context<Self>) {
+        // 正在取新地址时不重复触发
+        if self.loading {
+            return;
+        }
         let Some(player) = self.room.as_ref().and_then(|r| r.player.as_ref()) else { return };
         let v = self.video.read(cx);
         let (Some(since), last) = (v.playing_since, v.last_frame) else { return };
-        let stalled = player.idle()
-            || match last {
-                Some(t) => t.elapsed() > Duration::from_secs(10),
-                None => since.elapsed() > Duration::from_secs(30),
-            };
-        if !stalled {
+        if !is_stalled(player.idle(), since, last, Instant::now()) {
             if last.is_some() {
                 self.stall_retries = 0;
             }
@@ -465,12 +472,9 @@ impl SimpleLive {
             return self.play(cx); // 播放中调用 play 是暂停
         }
         self.stall_retries += 1;
-        // 先停掉旧播放器，免得取新地址期间它还在空转，看门狗也不会重复触发
-        if let Some(room) = self.room.as_mut() {
-            room.player = None;
-            let idx = room.quality_idx;
-            self.choose_quality(idx, cx);
-        }
+        // 旧播放器先留着：网络没恢复、取地址失败时它仍处于断流状态，下一轮检查会接着重试
+        let idx = self.room.as_ref().map_or(0, |r| r.quality_idx);
+        self.choose_quality(idx, cx);
     }
 
     fn site(&self) -> Arc<Site> {
@@ -821,6 +825,10 @@ impl SimpleLive {
     }
 
     fn set_danmaku_style(&mut self, style: DanmakuStyle, cx: &mut Context<Self>) {
+        // 拖动滑块时每次鼠标移动都会进来，取整后大多没变，不必每次写文件
+        if style == self.store.danmaku {
+            return;
+        }
         self.store.danmaku = style;
         self.store.save();
         self.video.update(cx, |v, cx| {
@@ -1876,6 +1884,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stall_detection() {
+        let t0 = Instant::now();
+        let at = |secs| t0 + Duration::from_secs(secs);
+        assert!(is_stalled(true, t0, Some(t0), t0), "线路都断了");
+        assert!(!is_stalled(false, t0, Some(at(5)), at(14)), "9 秒前还有画面");
+        assert!(is_stalled(false, t0, Some(at(5)), at(16)), "11 秒没有新画面");
+        assert!(!is_stalled(false, t0, None, at(29)), "首次缓冲给 30 秒");
+        assert!(is_stalled(false, t0, None, at(31)), "30 秒还没出画面");
+    }
 
     #[test]
     fn counts_are_compact() {

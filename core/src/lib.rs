@@ -22,14 +22,6 @@ pub struct RoomPage {
 }
 
 #[derive(Clone, Debug)]
-pub struct AnchorItem {
-    pub room_id: String,
-    pub avatar: String,
-    pub user_name: String,
-    pub live: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct SubCategory {
     pub id: String,
     pub parent_id: String,
@@ -52,9 +44,7 @@ pub struct RoomDetail {
     pub user_name: String,
     pub user_avatar: String,
     pub online: i64,
-    pub introduction: String,
     pub live: bool,
-    pub url: String,
     pub danmaku: DanmakuArgs,
 }
 
@@ -72,7 +62,7 @@ pub struct PlayUrl {
 
 #[derive(Clone, Debug)]
 pub enum LiveMessage {
-    Chat { user: String, text: String, color: (u8, u8, u8), images: Vec<String> },
+    Chat { user: String, text: String, color: (u8, u8, u8) },
     Online(i64),
     SuperChat { user: String, text: String, price: i64 },
 }

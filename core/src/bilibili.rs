@@ -290,24 +290,6 @@ impl BiliBili {
         Ok(RoomPage { has_more: items.len() >= 40, items })
     }
 
-    pub async fn search_anchors(&self, keyword: &str, page: u32) -> Result<(bool, Vec<AnchorItem>)> {
-        let v = self.search("live_user", keyword, page).await?;
-        let em = regex::Regex::new(r"<.*?em.*?>")?;
-        let items: Vec<_> = v["data"]["result"]
-            .as_array()
-            .map(|a| a.as_slice())
-            .unwrap_or_default()
-            .iter()
-            .map(|it| AnchorItem {
-                room_id: s(&it["roomid"]),
-                avatar: format!("https:{}@400w.jpg", s(&it["uface"])),
-                user_name: em.replace_all(&s(&it["uname"]), "").into_owned(),
-                live: it["is_live"].as_bool().unwrap_or(false),
-            })
-            .collect();
-        Ok((items.len() >= 40, items))
-    }
-
     async fn search(&self, kind: &str, keyword: &str, page: u32) -> Result<Value> {
         self.get(
             "https://api.bilibili.com/x/web-interface/search/type",
@@ -354,9 +336,7 @@ impl BiliBili {
             user_name: s(&info["anchor_info"]["base_info"]["uname"]),
             user_avatar: format!("{}@100w.jpg", s(&info["anchor_info"]["base_info"]["face"])),
             online: i(&ri["online"]),
-            introduction: s(&ri["description"]),
             live: i(&ri["live_status"]) == 1,
-            url: format!("https://live.bilibili.com/{room_id}"),
             danmaku: DanmakuArgs::BiliBili(BiliDanmakuArgs {
                 room_id: real.parse().unwrap_or(0),
                 uid: self.uid,
@@ -430,11 +410,6 @@ impl BiliBili {
         }
         urls.sort_by_key(|u| u.contains("mcdn")); // mcdn 排后
         Ok(PlayUrl { urls, headers: vec![("referer".into(), "https://live.bilibili.com".into()), ("user-agent".into(), ROOM_UA.into())] })
-    }
-
-    pub async fn live_status(&self, room_id: &str) -> Result<bool> {
-        let v = self.get("https://api.live.bilibili.com/room/v1/Room/get_info", &[("room_id", room_id)], UA).await?;
-        Ok(i(&v["data"]["live_status"]) == 1)
     }
 }
 

@@ -43,10 +43,13 @@ jobs:
         run: |
           ref="${REF#refs/tags/}"
           if [[ "$ref" == v* ]]; then
-            file=$(jq -r .version app_version.json)
-            if [[ "$file" != "${ref#v}" ]]; then
-              echo "::error::标签 $ref 与 app_version.json 里的版本 $file 不一致"
-              exit 1
+            # v0.1.2 之前的标签没有 app_version.json，跳过核对
+            if [[ -f app_version.json ]]; then
+              file=$(jq -r .version app_version.json)
+              if [[ "$file" != "${ref#v}" ]]; then
+                echo "::error::标签 $ref 与 app_version.json 里的版本 $file 不一致"
+                exit 1
+              fi
             fi
             echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
             echo "is_tag=true" >> "$GITHUB_OUTPUT"
@@ -70,11 +73,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # shinchiro/mpv-winbuild-cmake 的每日构建，取最新的 x86_64 开发包（不要 v3/AVX2 变体，兼容老 CPU）
-          $asset = gh release view --repo shinchiro/mpv-winbuild-cmake --json assets --jq '.assets[].name' | Where-Object { $_ -match '^mpv-dev-x86_64-\d{8}-git-.+\.7z$' } | Select-Object -First 1
-          if (-not $asset) { throw "没有找到 mpv-dev-x86_64 开发包" }
-          Write-Host "使用 $asset"
-          gh release download --repo shinchiro/mpv-winbuild-cmake --pattern $asset --output mpv-dev.7z
+          # shinchiro/mpv-winbuild-cmake 的 x86_64 开发包（不要 v3/AVX2 变体，兼容老 CPU）。
+          # 固定版本并校验（同原项目 media_kit_libs_windows_video），每次发版用同一个 libmpv；升级时改这三个值
+          $release = "20261021"
+          $asset = "mpv-dev-x86_64-$release-git-e471496c56.7z"
+          $sha256 = "efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633"
+          gh release download $release --repo shinchiro/mpv-winbuild-cmake --pattern $asset --output mpv-dev.7z
+          if ((Get-FileHash mpv-dev.7z -Algorithm SHA256).Hash -ne $sha256) { throw "$asset 的 SHA-256 不符" }
           7z x mpv-dev.7z -ompv | Out-Null
           # MSVC 链接器可以直接使用 MinGW 的导入库，改名成 #[link(name = "mpv")] 要找的 mpv.lib
           Copy-Item mpv/libmpv.dll.a mpv/mpv.lib
@@ -131,9 +136,13 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: 读取更新说明
         id: meta
+        # 旧标签没有这个文件：不传更新说明，已有 Release 的正文保持不变
         run: |
-          echo "prerelease=$(jq -r .prerelease app_version.json)" >> "$GITHUB_OUTPUT"
-          jq -r .version_desc app_version.json > notes.md
+          if [[ -f app_version.json ]]; then
+            echo "prerelease=$(jq -r .prerelease app_version.json)" >> "$GITHUB_OUTPUT"
+            jq -r .version_desc app_version.json > notes.md
+            echo "notes=notes.md" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -141,6 +150,6 @@ jobs:
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: ${{ needs.version.outputs.version }}
-          body_path: notes.md
+          body_path: ${{ steps.meta.outputs.notes }}
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           files: artifacts/**/*

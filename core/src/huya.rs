@@ -253,9 +253,7 @@ impl Huya {
             user_name: s(&profile["sNick"]),
             user_avatar: s(&profile["sAvatar180"]),
             online: i(&live["lTotalCount"]),
-            introduction: s(&live["sIntroduction"]),
             live: v["roomInfo"]["eLiveStatus"] == 2,
-            url: format!("https://www.huya.com/{room_id}"),
             danmaku: DanmakuArgs::Huya { ayyuid: i(&live["lYyid"]), top_sid: top, sub_sid: sub },
         })
     }
@@ -343,7 +341,7 @@ pub fn parse_message(frame: &[u8]) -> Option<LiveMessage> {
         1400 => {
             let c = msg.struct_(6).int(0);
             let color = if c <= 0 { (255, 255, 255) } else { ((c >> 16) as u8, (c >> 8) as u8, c as u8) };
-            Some(LiveMessage::Chat { user: msg.struct_(0).string(2), text: msg.string(3), color, images: vec![] })
+            Some(LiveMessage::Chat { user: msg.struct_(0).string(2), text: msg.string(3), color })
         }
         8006 => Some(LiveMessage::Online(msg.int(0))),
         _ => None,

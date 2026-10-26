@@ -148,9 +148,7 @@ impl Douyu {
             user_name: s(&r["owner_name"]),
             user_avatar: s(&r["owner_avatar"]),
             online: i(&r["room_biz_all"]["hot"]),
-            introduction: s(&r["show_details"]),
             live: r["show_status"] == 1 && r["videoLoop"] != 1,
-            url: format!("https://www.douyu.com/{room_id}"),
             danmaku: DanmakuArgs::Douyu(real.clone()),
             room_id: real,
         })
@@ -285,7 +283,7 @@ pub fn parse_message(stt: &str) -> Option<LiveMessage> {
         6 => (255, 105, 180),
         _ => (255, 255, 255),
     };
-    Some(LiveMessage::Chat { user: stt_get(stt, "nn")?, text: stt_get(stt, "txt")?, color, images: vec![] })
+    Some(LiveMessage::Chat { user: stt_get(stt, "nn")?, text: stt_get(stt, "txt")?, color })
 }
 
 /// 服务器只给 AES256-GCM-SHA384（无前向保密），rustls 不支持，所以 ws 用 native-tls。

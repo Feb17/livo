@@ -75,22 +75,7 @@ pub fn parse_message(v: &Value) -> Option<LiveMessage> {
         let text = info[1].as_str()?.to_string();
         let c = info[0][3].as_u64().unwrap_or(0) as u32;
         let color = if c == 0 { (255, 255, 255) } else { ((c >> 16) as u8, (c >> 8) as u8, c as u8) };
-        let mut images = vec![];
-        if let Some(u) = info[0][13]["url"].as_str().filter(|u| !u.is_empty()) {
-            images.push(u.to_string());
-        }
-        if let Some(extra) = info[0][15]["extra"].as_str().and_then(|e| serde_json::from_str::<Value>(e).ok()) {
-            if let Some(emots) = extra["emots"].as_object() {
-                for (k, e) in emots {
-                    if let Some(u) = e["url"].as_str().filter(|_| text.contains(k.as_str())) {
-                        if !images.iter().any(|x| x == u) {
-                            images.push(u.to_string());
-                        }
-                    }
-                }
-            }
-        }
-        Some(LiveMessage::Chat { user, text, color, images })
+        Some(LiveMessage::Chat { user, text, color })
     } else if cmd == "SUPER_CHAT_MESSAGE" {
         let d = &v["data"];
         Some(LiveMessage::SuperChat {
@@ -156,10 +141,7 @@ mod tests {
         let mut out = vec![];
         decode(&pkt, &mut out);
         match &out[0] {
-            LiveMessage::Chat { user, text, color, images } => {
-                assert_eq!((user.as_str(), text.as_str(), *color), ("小明", "你好", (255, 255, 255)));
-                assert_eq!(images, &vec!["http://e/1.png".to_string()]);
-            }
+            LiveMessage::Chat { user, text, color } => assert_eq!((user.as_str(), text.as_str(), *color), ("小明", "你好", (255, 255, 255))),
             m => panic!("{m:?}"),
         }
     }

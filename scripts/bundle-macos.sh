@@ -19,7 +19,11 @@ if [ ! -d "$LIBMPV_DIR" ]; then
   mkdir -p target/libmpv
   curl -fsSL -o "target/libmpv/$LIBMPV_PKG.tar.gz" "https://github.com/media-kit/libmpv-darwin-build/releases/download/$LIBMPV_VER/$LIBMPV_PKG.tar.gz"
   echo "$LIBMPV_SHA256  target/libmpv/$LIBMPV_PKG.tar.gz" | shasum -a 256 -c -
-  tar -xzf "target/libmpv/$LIBMPV_PKG.tar.gz" -C target/libmpv
+  # 先解压到临时目录，完整解压后才改名成正式目录；中途中断不会留下残缺目录，下次会重新下载校验
+  tmp=$(mktemp -d target/libmpv/.extract.XXXXXX)
+  tar -xzf "target/libmpv/$LIBMPV_PKG.tar.gz" -C "$tmp"
+  mv "$tmp/$LIBMPV_PKG" "$LIBMPV_DIR"
+  rmdir "$tmp"
 fi
 
 MPV_LIB_DIR="$LIBMPV_DIR" cargo build --release -p simple_live_gpui

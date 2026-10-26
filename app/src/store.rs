@@ -191,13 +191,20 @@ fn path() -> PathBuf {
 }
 
 impl Store {
-    /// 文件不存在或损坏时用默认值，不让一个坏文件挡住启动
+    /// 文件不存在或损坏时用默认值，不让一个坏文件挡住启动；损坏的原文件另存为 settings.json.bad
     pub fn load() -> Self {
         Self::load_from(&path())
     }
 
     fn load_from(p: &std::path::Path) -> Self {
-        std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let Ok(bytes) = std::fs::read(p) else { return Self::default() };
+        serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            // 坏文件改名留着：不然下一次保存会用默认值把关注、观看记录和登录全部覆盖掉
+            let bad = p.with_extension("json.bad");
+            eprintln!("设置文件解析失败（{e}），原文件已另存为 {}", bad.display());
+            let _ = std::fs::rename(p, &bad);
+            Self::default()
+        })
     }
 
     pub fn save(&self) {
@@ -259,6 +266,7 @@ mod tests {
         assert_eq!(s.key_for("fullscreen"), "f");
         std::fs::write(&p, "not json").unwrap();
         assert_eq!(Store::load_from(&p), Store::default());
+        assert_eq!(std::fs::read(p.with_extension("json.bad")).unwrap(), b"not json", "坏文件要原样留着");
         std::fs::remove_dir_all(dir).ok();
     }
 }
