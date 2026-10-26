@@ -18,6 +18,8 @@ extern "C" {
     fn mpv_set_property_string(h: *mut c_void, name: *const c_char, data: *const c_char) -> c_int;
     fn mpv_command(h: *mut c_void, args: *mut *const c_char) -> c_int;
     fn mpv_get_property(h: *mut c_void, name: *const c_char, format: c_int, data: *mut c_void) -> c_int;
+    fn mpv_get_property_string(h: *mut c_void, name: *const c_char) -> *mut c_char;
+    fn mpv_free(data: *mut c_void);
     fn mpv_error_string(err: c_int) -> *const c_char;
     fn mpv_terminate_destroy(h: *mut c_void);
     pub(crate) fn mpv_render_context_create(res: *mut *mut c_void, h: *mut c_void, params: *mut RenderParam) -> c_int;
@@ -36,6 +38,7 @@ const PARAM_SW_POINTER: c_int = 20;
 const UPDATE_FRAME: u64 = 1;
 const FORMAT_FLAG: c_int = 3;
 const FORMAT_INT64: c_int = 4;
+const FORMAT_DOUBLE: c_int = 5;
 /// shortcut: 软件渲染整帧走 CPU，宽度封顶 1280 控制开销；只是 GL 不可用时的兜底。
 const SW_MAX_WIDTH: i64 = 1280;
 
@@ -199,6 +202,48 @@ impl Player {
         v != 0
     }
 
+    /// 调试信息面板的内容：(名称, 值)；取不到的项（如直播流没有的码率）直接省略
+    pub fn stats(&self) -> Vec<(&'static str, String)> {
+        let h = &self.mpv;
+        let (s, f, i) = (|n| prop_str(h, n), |n| prop_f64(h, n), |n| prop(h, n));
+        let mbps = |bits: f64| format!("{:.2} Mbps", bits / 1e6);
+        let join = |parts: Vec<Option<String>>| parts.into_iter().flatten().collect::<Vec<_>>().join(", ");
+        let video = join(vec![
+            s("video-format").map(|c| c.to_uppercase()),
+            (i("video-params/w") > 0).then(|| format!("{}x{}", i("video-params/w"), i("video-params/h"))),
+            f("video-bitrate").filter(|b| *b > 0.).map(mbps),
+            f("container-fps").map(|x| format!("{x:.2} fps")),
+        ]);
+        let audio = join(vec![
+            s("audio-codec-name").map(|c| c.to_uppercase()),
+            (i("audio-params/samplerate") > 0).then(|| format!("{} Hz", i("audio-params/samplerate"))),
+            (i("audio-params/channel-count") > 0).then(|| format!("{} 声道", i("audio-params/channel-count"))),
+            f("audio-bitrate").filter(|b| *b > 0.).map(|b| format!("{:.0} kbps", b / 1e3)),
+        ]);
+        let decode = match s("hwdec-current").as_deref() {
+            None | Some("no") | Some("") => "软件解码".to_string(),
+            Some(x) => format!("硬件解码（{x}）"),
+        };
+        let fps = join(vec![f("container-fps").map(|x| format!("源 {x:.2}")), f("estimated-vf-fps").map(|x| format!("实际 {x:.2}"))]);
+        let cache = f("demuxer-cache-duration").map(|d| format!("{d:.1} 秒{}", if s("paused-for-cache").as_deref() == Some("yes") { "（缓冲中）" } else { "" }));
+        let host = s("path").and_then(|p| p.split("://").nth(1).and_then(|r| r.split('/').next()).map(str::to_string));
+        let line = join(vec![Some(format!("{} / {}", i("playlist-pos") + 1, i("playlist-count"))), host]);
+        [
+            ("容器", s("file-format")),
+            ("视频", Some(video).filter(|v| !v.is_empty())),
+            ("解码", Some(decode)),
+            ("音频", Some(audio).filter(|a| !a.is_empty())),
+            ("帧率", Some(fps).filter(|v| !v.is_empty())),
+            ("丢帧", Some(format!("解码 {} · 显示 {}", i("decoder-frame-drop-count"), i("frame-drop-count")))),
+            ("缓冲", cache),
+            ("网络速度", Some(mbps(i("cache-speed") as f64 * 8.))),
+            ("线路", Some(line)),
+        ]
+        .into_iter()
+        .filter_map(|(k, v)| Some((k, v?)))
+        .collect()
+    }
+
     /// 音量 0-100；静音单独控制，取消静音后恢复原音量
     pub fn set_volume(&self, volume: u8, muted: bool) {
         unsafe {
@@ -212,6 +257,21 @@ pub(crate) fn prop(mpv: &Handle, name: &str) -> i64 {
     let mut v = 0i64;
     unsafe { mpv_get_property(mpv.0, cstr(name).as_ptr(), FORMAT_INT64, &mut v as *mut i64 as *mut c_void) };
     v
+}
+
+fn prop_f64(mpv: &Handle, name: &str) -> Option<f64> {
+    let mut v = 0f64;
+    (unsafe { mpv_get_property(mpv.0, cstr(name).as_ptr(), FORMAT_DOUBLE, &mut v as *mut f64 as *mut c_void) } >= 0).then_some(v)
+}
+
+fn prop_str(mpv: &Handle, name: &str) -> Option<String> {
+    let p = unsafe { mpv_get_property_string(mpv.0, cstr(name).as_ptr()) };
+    if p.is_null() {
+        return None;
+    }
+    let v = unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned();
+    unsafe { mpv_free(p as *mut c_void) };
+    Some(v)
 }
 
 /// 输出尺寸：按视频比例缩到控件以内（不放大），宽度再受 `max_w` 限制。
@@ -303,8 +363,12 @@ mod tests {
     #[test]
     fn renders_test_source() {
         let src = "av://lavfi:color=c=black:s=640x360:r=30,drawbox=x=0:y=0:w=320:h=90:color=white:t=fill";
-        let (_p, mut rx) = Player::new(&[src.into()], &[], true, 16).unwrap();
-        match rx.blocking_recv().expect("frame") {
+        let (p, mut rx) = Player::new(&[src.into()], &[], true, 16).unwrap();
+        let first = rx.blocking_recv().expect("frame");
+        let stats = p.stats();
+        assert!(stats.iter().any(|(k, v)| *k == "视频" && v.contains("640x360")), "{stats:?}");
+        assert!(stats.iter().any(|(k, _)| *k == "线路"), "{stats:?}");
+        match first {
             Frame::Bgra { width, height, bgra } => {
                 assert_eq!((width, height), (640, 360));
                 let px = |x: usize, y: usize| bgra[(y * 640 + x) * 4];

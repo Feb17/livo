@@ -10,11 +10,11 @@ mod store;
 mod mpv_gl;
 
 use gpui::{
-    canvas, div, image_cache, img, list, relative, AnyElement, ShapedLine, ListAlignment, ListState, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
-    HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, RetainAllImageCache, Rgba, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    canvas, div, ease_in_out, ease_out_quint, image_cache, img, list, relative, Animation, AnimationExt, AnyElement, ShapedLine, ListAlignment, ListState, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
+    HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, RetainAllImageCache, Rgba, ScrollHandle, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use icons::icon;
-use simple_live_core::{danmaku, Category, LiveMessage, PlayQuality, RoomDetail, RoomItem, RoomPage, Site, SubCategory};
+use simple_live_core::{danmaku, AnchorItem, Category, LiveMessage, PlayQuality, RoomDetail, RoomItem, RoomPage, Site, SubCategory};
 use std::cell::Cell;
 use std::ops::Range;
 use simple_live_core::bilibili::BiliBili;
@@ -45,6 +45,10 @@ fn surface() -> u32 {
 }
 fn hover() -> u32 {
     themed(0x232834, 0xeceef2)
+}
+/// 分段控件里浮起的选中块：比轨道（hover）亮一档
+fn raised() -> u32 {
+    themed(0x3a404c, 0xffffff)
 }
 fn border() -> u32 {
     themed(0x262b36, 0xe1e4ea)
@@ -123,7 +127,6 @@ impl Tab {
             "recommend" => Tab::Recommend,
             "follow" => Tab::Follow,
             "category" => Tab::Category,
-            "search" => Tab::Search,
             _ => return None,
         })
     }
@@ -367,6 +370,19 @@ struct SimpleLive {
     epoch: u64,
     /// 断流看门狗连续重试的次数，出画面后清零
     stall_retries: u8,
+    /// 搜索结果里的主播（第一页）和这一行的横向滚动位置
+    anchors: Vec<AnchorItem>,
+    anchors_scroll: ScrollHandle,
+    /// 播放器调试信息面板：是否显示、最近一次读到的内容、刷新循环的代号（关掉或重开时让旧循环退出）
+    show_stats: bool,
+    stats: Vec<(&'static str, String)>,
+    stats_gen: usize,
+    /// 进入搜索结果前的页面，Esc 回到这里
+    before_search: Tab,
+    /// 页面代号：切换页面时加一，新页面内容按它播一次淡入
+    page_gen: usize,
+    /// 刚被点击的控件和代号：只有它播放过渡动画，其余控件直接画最终状态，打开页面时不会集体动一遍
+    anim: (&'static str, usize),
     /// 浏览页的封面/分类图。GPUI 默认的图片缓存只增不减（内存 + 显存各一份），
     /// 所以浏览页用自己的缓存，换页面或进直播间时整个换掉，旧图随之释放
     images: Entity<RetainAllImageCache>,
@@ -422,6 +438,14 @@ impl SimpleLive {
             login: None,
             epoch: 0,
             stall_retries: 0,
+            anchors: vec![],
+            anchors_scroll: ScrollHandle::new(),
+            show_stats: false,
+            stats: vec![],
+            stats_gen: 0,
+            before_search: Tab::Recommend,
+            page_gen: 0,
+            anim: ("", 0),
         };
         // 主页设置里排第一的页面是启动页
         let first = s.store.home_sort.iter().find_map(|id| Tab::from_id(id)).unwrap_or(Tab::Recommend);
@@ -477,6 +501,16 @@ impl SimpleLive {
         self.choose_quality(idx, cx);
     }
 
+    /// 记下刚操作的控件，让它播放一次过渡动画
+    fn touch(&mut self, key: &'static str) {
+        self.anim = (key, self.anim.1 + 1);
+    }
+
+    /// 该控件正在过渡时返回动画代号
+    fn anim_gen(&self, key: &str) -> Option<usize> {
+        (self.anim.0 == key).then_some(self.anim.1)
+    }
+
     fn site(&self) -> Arc<Site> {
         self.sites[self.site_idx].clone()
     }
@@ -499,9 +533,14 @@ impl SimpleLive {
     /// 切到某个页面（侧边栏导航）
     fn go(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.room = None;
+        self.page_gen += 1;
         self.images = RetainAllImageCache::new(cx);
+        if tab == Tab::Search && self.tab != Tab::Search {
+            self.before_search = self.tab;
+        }
         self.tab = tab;
-        if tab.is_site_page() {
+        // 搜索结果不算“上次浏览的平台页面”
+        if tab.is_site_page() && tab != Tab::Search {
             self.site_tab = tab;
         }
         match tab {
@@ -526,7 +565,8 @@ impl SimpleLive {
     /// 播放/停止切换；帧循环在播放器销毁（发送端关闭）后把最后一帧移出纹理图集。
     fn play(&mut self, cx: &mut Context<Self>) {
         let (volume, muted, live) = (self.volume, self.muted, self.store.live.clone());
-        let Some(room) = self.room.as_mut() else { return };
+        // 未开播的房间没有播放地址
+        let Some(room) = self.room.as_mut().filter(|r| !r.urls.is_empty()) else { return };
         if room.player.take().is_some() {
             self.video.update(cx, |v, cx| {
                 v.view = None;
@@ -639,6 +679,8 @@ impl SimpleLive {
         self.images = RetainAllImageCache::new(cx);
         self.source = source;
         self.rooms.clear();
+        self.anchors.clear();
+        self.anchors_scroll = ScrollHandle::new();
         self.page = 0;
         self.has_more = false;
         self.load_more(cx);
@@ -647,13 +689,24 @@ impl SimpleLive {
     fn load_more(&mut self, cx: &mut Context<Self>) {
         let (site, page, source) = (self.site(), self.page + 1, self.source.clone());
         let job = async move {
-            match source {
-                Source::Recommend => site.recommend_rooms(page).await,
-                Source::Category(sub) => site.category_rooms(&sub, page).await,
-                Source::Search(kw) => site.search_rooms(&kw, page).await,
-            }
+            anyhow::Ok(match source {
+                Source::Recommend => (site.recommend_rooms(page).await?, vec![]),
+                Source::Category(sub) => (site.category_rooms(&sub, page).await?, vec![]),
+                // 搜索第一页同时搜主播（同原项目的两个接口，不让用户选类型）；主播接口失败不影响直播间结果
+                // 两个接口任一成功就显示成功的部分；都失败才报错（比如斗鱼对匿名搜索要求人机验证时）
+                Source::Search(kw) if page == 1 => match tokio::join!(site.search_rooms(&kw, page), site.search_anchors(&kw, 1)) {
+                    (Err(e), Err(_)) => return Err(e),
+                    (rooms, anchors) => (rooms.unwrap_or_default(), anchors.map(|(_, a)| a).unwrap_or_default()),
+                },
+                Source::Search(kw) => (site.search_rooms(&kw, page).await?, vec![]),
+            })
         };
-        self.fetch(cx, job, move |this, p: RoomPage, _| {
+        self.fetch(cx, job, move |this, (p, anchors): (RoomPage, Vec<AnchorItem>), _| {
+            // 第一页到达时从骨架屏淡入成内容；加载更多不动
+            if page == 1 {
+                this.page_gen += 1;
+                this.anchors = anchors;
+            }
             this.page = page;
             this.has_more = p.has_more && !p.items.is_empty();
             // 分页接口偶尔重叠，去重以免卡片 id 冲突
@@ -666,6 +719,7 @@ impl SimpleLive {
     }
 
     fn open_sub(&mut self, sub: SubCategory, cx: &mut Context<Self>) {
+        self.page_gen += 1;
         self.sub = Some(sub.clone());
         self.load_rooms(Source::Category(sub), cx);
     }
@@ -676,6 +730,10 @@ impl SimpleLive {
         let memory = self.store.live.quality_memory.get(site.id()).cloned();
         let job = async move {
             let detail = site.room_detail(&room_id).await?;
+            // 未开播也进直播间（能看简介、关注、看弹幕），只是不取播放地址
+            if !detail.live {
+                return Ok((detail, vec![], 0, simple_live_core::PlayUrl::default()));
+            }
             let q = site.play_qualities(&detail.room_id).await?;
             let idx = default_quality(&q, level, memory.as_deref());
             let urls = site.play_urls(&detail.room_id, q[idx].qn).await?;
@@ -759,6 +817,7 @@ impl SimpleLive {
 
     fn close_room(&mut self, cx: &mut Context<Self>) {
         self.exit_gen += 1;
+        self.page_gen += 1;
         self.room = None;
         self.video.update(cx, |v, cx| {
             v.view = None;
@@ -796,6 +855,32 @@ impl SimpleLive {
             room.player = None;
             this.play(cx);
         });
+    }
+
+    /// 调试信息面板：打开时每秒从播放器读一次
+    fn toggle_stats(&mut self, cx: &mut Context<Self>) {
+        self.show_stats = !self.show_stats;
+        self.stats_gen += 1;
+        cx.notify();
+        if !self.show_stats {
+            return;
+        }
+        let gen = self.stats_gen;
+        cx.spawn(async move |this, cx| loop {
+            let alive = this.update(cx, |this, cx| {
+                if this.stats_gen != gen {
+                    return false;
+                }
+                this.stats = this.room.as_ref().and_then(|r| r.player.as_ref()).map(|p| p.stats()).unwrap_or_default();
+                cx.notify();
+                true
+            });
+            if !matches!(alive, Ok(true)) {
+                break;
+            }
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+        })
+        .detach();
     }
 
     fn toggle_danmaku(&mut self, cx: &mut Context<Self>) {
@@ -948,10 +1033,13 @@ impl SimpleLive {
             "fullscreen" => window.toggle_fullscreen(),
             "danmaku" => self.toggle_danmaku(cx),
             "mute" => self.set_volume(self.volume, !self.muted, cx),
-            "refresh" => {
-                let idx = self.room.as_ref().map_or(0, |r| r.quality_idx);
-                self.choose_quality(idx, cx)
-            }
+            "stats" => self.toggle_stats(cx),
+            "refresh" => match self.room.as_ref() {
+                // 未开播的房间刷新就是重新进一次，看主播开播了没有
+                Some(r) if r.urls.is_empty() => self.open_room(r.detail.room_id.clone(), cx),
+                Some(r) => self.choose_quality(r.quality_idx, cx),
+                None => {}
+            },
             "chat" => {
                 self.show_chat = !self.show_chat;
                 cx.notify()
@@ -997,10 +1085,13 @@ impl SimpleLive {
         }
         // 列表页里直接打字就是搜索，回车出结果；组字中的回车/退格由输入法先处理
         match key {
-            "enter" => return self.go(Tab::Search, cx),
+            "enter" if !self.keyword.trim().is_empty() => return self.go(Tab::Search, cx),
             "escape" => {
                 self.keyword.clear();
                 self.marked = None;
+                if self.tab == Tab::Search {
+                    return self.go(self.before_search, cx);
+                }
             }
             "backspace" => {
                 self.keyword.pop();
@@ -1130,6 +1221,11 @@ fn fit_of(fit: u8) -> ObjectFit {
 }
 
 /// 侧边栏导航项
+/// 新内容淡入并轻微上移（macOS 切换侧边栏页面的手感）；id 变了才重新播放
+fn fade_in(el: gpui::Div, id: impl Into<gpui::ElementId>) -> impl IntoElement {
+    el.with_animation(id, Animation::new(Duration::from_millis(180)).with_easing(ease_out_quint()), |d, t| d.opacity(t).mt(px(4. * (1. - t))))
+}
+
 fn nav_item(id: impl Into<SharedString>, label: impl Into<SharedString>, active: bool, accent: u32) -> gpui::Stateful<gpui::Div> {
     let item = div().id(id.into()).px_3().py_2().rounded_lg().cursor_pointer().flex().items_center().gap_2().text_sm();
     if active {
@@ -1292,7 +1388,7 @@ impl SimpleLive {
         let accent = self.accent();
         let searching = self.tab == Tab::Search || !self.keyword.is_empty();
         let search_text = if self.keyword.is_empty() {
-            div().text_color(rgb(subtle())).child("直接输入关键词搜索…")
+            div().text_color(rgb(subtle())).child("搜索直播间或主播")
         } else {
             // 输入法组字中的部分加下划线
             let underline = HighlightStyle { underline: Some(UnderlineStyle { thickness: px(1.), color: Some(rgb(accent).into()), wavy: false }), ..Default::default() };
@@ -1311,6 +1407,7 @@ impl SimpleLive {
                     .hover(|s| s.text_color(rgb(accent)))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.sub = None;
+                        this.page_gen += 1;
                         cx.notify()
                     }))
                     .child("‹ 全部分类"),
@@ -1343,7 +1440,7 @@ impl SimpleLive {
                     .border_color(if searching { tint(accent, 0x99) } else { rgb(border()).into() })
                     .text_sm()
                     .cursor_text()
-                    .on_click(cx.listener(|this, _, _, cx| this.go(Tab::Search, cx)))
+                    .on_click(cx.listener(|this, _, window, _| window.focus(&this.focus)))
                     .relative()
                     // 把文字输入（含输入法组字）接到这个搜索框
                     .child(canvas(|_, _, _| {}, move |bounds, _, window, cx| window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx)).absolute().size_full())
@@ -1359,7 +1456,6 @@ impl SimpleLive {
             (Tab::Recommend, _) => ("热门推荐".to_string(), format!("{site} · 正在直播")),
             (Tab::Category, None) => ("全部分类".to_string(), format!("{site} · {} 个大类", self.cats.len())),
             (Tab::Category, Some(sub)) => (sub.name.clone(), format!("{site} · 分类直播")),
-            (Tab::Search, _) if self.keyword.is_empty() => ("搜索".to_string(), format!("在{site}里找直播间")),
             (Tab::Search, _) => (format!("“{}”", self.keyword), format!("{site} · 搜索结果")),
             (Tab::History, _) => ("观看记录".to_string(), format!("最近看过的 {} 个直播间", self.store.history.len())),
             (Tab::Settings, _) => ("设置".to_string(), "外观、播放、弹幕、关注与账号".to_string()),
@@ -1373,6 +1469,7 @@ impl SimpleLive {
             Tab::Follow => self.render_follows(content_w - 2. * PAD, cx).into_any_element(),
             Tab::History => self.render_history(content_w - 2. * PAD, cx).into_any_element(),
             Tab::Settings => self.render_settings(cx).into_any_element(),
+            Tab::Search => self.render_search(content_w - 2. * PAD, cx).into_any_element(),
             _ => self.render_grid(content_w - 2. * PAD, cx).into_any_element(),
         };
         image_cache(self.images.clone())
@@ -1380,7 +1477,7 @@ impl SimpleLive {
             .flex()
             .flex_col()
             .child(self.render_header(title, subtitle, cx))
-            .child(div().id("browse").flex_1().overflow_y_scroll().px(px(PAD)).pb(px(PAD)).child(body))
+            .child(div().id("browse").flex_1().overflow_y_scroll().px(px(PAD)).pb(px(PAD)).child(fade_in(div().child(body), ("page", self.page_gen))))
     }
 
     fn render_grid(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1394,8 +1491,13 @@ impl SimpleLive {
             return if self.loading {
                 grid.children((0..cols as usize * 2).map(|_| div().flex().flex_col().gap_2().child(skeleton(card_w, cover_h)).child(skeleton(card_w * 0.8, 14.)).child(skeleton(card_w * 0.4, 12.)))).into_any_element()
             } else {
-                let tip = if self.tab == Tab::Search && self.keyword.is_empty() { "在任意位置直接输入关键词，按回车搜索" } else { "这里还没有直播间" };
-                div().pt(px(120.)).flex().justify_center().text_color(rgb(muted())).child(tip).into_any_element()
+                let tip = match (self.tab, &self.error) {
+                    (Tab::Search, Some(e)) if e.contains("验证") => "搜索被平台暂时限制（需要人机验证），请稍后再试",
+                    (Tab::Search, Some(_)) => "搜索失败，请稍后再试",
+                    (Tab::Search, None) => "没有搜到相关的直播间",
+                    _ => "这里还没有直播间",
+                };
+                div().pt(px(if self.anchors.is_empty() { 120. } else { 40. })).flex().justify_center().text_color(rgb(muted())).child(tip).into_any_element()
             };
         }
         let fallback = self.sites[self.site_idx].name();
@@ -1421,12 +1523,13 @@ impl SimpleLive {
     fn card(&self, id: SharedString, w: f32, cover: &str, title: &str, user: &str, online: Option<String>, fallback: &'static str) -> gpui::Stateful<gpui::Div> {
         let accent = self.accent();
         let live = online.is_some();
-        let badge = div().absolute().bottom(px(7.)).left(px(9.)).flex().items_center().gap_1p5().text_xs().text_color(rgb(0xffffff));
+        // 角标是封面左下角的半透明深色胶囊：不压暗整张封面，也能在任何画面上看清
+        let chip = || div().absolute().bottom(px(6.)).left(px(6.)).px_1p5().py_0p5().rounded_md().bg(tint(0x000000, 0x8c)).flex().items_center().gap_1().text_xs().text_color(rgb(0xffffff));
         let badge = match online {
             // 空字符串表示不显示角标（观看记录）
-            Some(n) if n.is_empty() => badge,
-            Some(n) => badge.child(div().size(px(6.)).rounded_full().bg(rgb(0xff4757))).child(n),
-            None => badge.child(div().px_1p5().rounded_sm().bg(tint(0x000000, 0x99)).child("未开播")),
+            Some(n) if n.is_empty() => None,
+            Some(n) => Some(chip().child(div().size(px(6.)).rounded_full().bg(rgb(0xff4757))).child(n)),
+            None => Some(chip().child("未开播")),
         };
         div()
             .id(id)
@@ -1445,9 +1548,6 @@ impl SimpleLive {
                     .rounded_lg()
                     .overflow_hidden()
                     .bg(rgb(surface()))
-                    .border_2()
-                    .border_color(tint(accent, 0x00))
-                    .group_hover("card", |s| s.border_color(rgb(accent)))
                     .child(
                         img(SharedString::from(cover.to_string()))
                             .size_full()
@@ -1455,11 +1555,73 @@ impl SimpleLive {
                             .with_loading(|| div().size_full().bg(rgb(surface())).into_any_element())
                             .with_fallback(move || div().size_full().flex().items_center().justify_center().text_color(rgb(subtle())).child(fallback).into_any_element()),
                     )
-                    .child(div().absolute().bottom_0().left_0().right_0().h(px(44.)).bg(linear_gradient(180., linear_color_stop(tint(0x000000, 0x00), 0.), linear_color_stop(tint(0x000000, 0xb0), 1.))))
-                    .child(badge),
+                    .children(badge)
+                    // 悬停描边叠在封面上面，平时透明，不占图片的位置
+                    .child(div().absolute().inset_0().rounded_lg().border_2().border_color(tint(accent, 0x00)).group_hover("card", |s| s.border_color(rgb(accent)))),
             )
             .child(div().h(px(40.)).text_sm().line_height(px(20.)).font_weight(FontWeight::MEDIUM).line_clamp(2).group_hover("card", |s| s.text_color(rgb(accent))).child(title.to_string()))
             .child(div().text_xs().text_color(rgb(muted())).truncate().child(user.to_string()))
+    }
+
+    /// 搜索结果：上面一行主播（横向滚动），下面是直播间
+    fn render_search(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        let heading = |t: &'static str| div().text_sm().font_weight(FontWeight::SEMIBOLD).child(t);
+        let anchors = self.anchors.iter().enumerate().map(|(i, a)| {
+            let id = a.room_id.clone();
+            let status = if a.live {
+                div().flex().items_center().gap_1().child(div().size(px(6.)).rounded_full().bg(rgb(0x2ed573))).child("直播中")
+            } else {
+                div().child("未开播")
+            };
+            div()
+                .id(SharedString::from(format!("anchor-{i}")))
+                .w(px(84.))
+                .flex_none()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_1p5()
+                .cursor_pointer()
+                .opacity(if a.live { 1. } else { 0.6 })
+                .on_click(cx.listener(move |this, _, _, cx| this.open_room(id.clone(), cx)))
+                .child(
+                    img(SharedString::from(a.avatar.clone()))
+                        .size(px(56.))
+                        .rounded_full()
+                        .object_fit(ObjectFit::Cover)
+                        .with_fallback(|| div().size(px(56.)).rounded_full().bg(rgb(hover())).into_any_element()),
+                )
+                .child(div().w_full().text_xs().text_center().truncate().child(a.user_name.clone()))
+                .child(status.text_xs().text_color(rgb(muted())))
+        });
+        // 鼠标滚轮在这一行上仍然上下滚动页面，所以像 App Store 那样在标题右侧放左右翻页按钮；触控板可以直接横扫
+        let (offset, max) = (-f32::from(self.anchors_scroll.offset().x), f32::from(self.anchors_scroll.max_offset().width));
+        let page = |dir: f32| {
+            move |this: &mut Self, _: &gpui::ClickEvent, _: &mut Window, cx: &mut Context<Self>| {
+                let h = &this.anchors_scroll;
+                let step = f32::from(h.bounds().size.width) * 0.8;
+                let x = (-f32::from(h.offset().x) + dir * step).clamp(0., f32::from(h.max_offset().width));
+                h.set_offset(point(px(-x), px(0.)));
+                cx.notify()
+            }
+        };
+        let arrow = |id: &'static str, label: &'static str, enabled: bool| {
+            let b = div().id(id).size(px(26.)).rounded_full().flex().items_center().justify_center().text_sm().bg(rgb(hover()));
+            if enabled { b.cursor_pointer().text_color(rgb(text())).hover(|s| s.bg(rgb(border()))) } else { b.text_color(rgb(subtle())) }.child(label)
+        };
+        let header = div()
+            .flex()
+            .items_center()
+            .child(heading("主播"))
+            .child(div().flex_1())
+            .when(max > 0., |d| d.gap_2().child(arrow("anchors-prev", "‹", offset > 0.5).on_click(cx.listener(page(-1.)))).child(arrow("anchors-next", "›", offset < max - 0.5).on_click(cx.listener(page(1.)))));
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .children((!self.anchors.is_empty()).then(|| div().flex().flex_col().gap_3().pb_3().child(header).child(div().id("anchors").flex().gap_2().overflow_x_scroll().track_scroll(&self.anchors_scroll).children(anchors))))
+            .child(heading("直播间"))
+            .child(self.render_grid(width, cx))
     }
 
     fn render_follows(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1537,6 +1699,7 @@ impl SimpleLive {
         let tabs = self.cats.iter().enumerate().map(|(i, c)| {
             pill(SharedString::from(format!("cat{i}")), c.name.clone(), i == self.cat_idx, accent).on_click(cx.listener(move |this, _, _, cx| {
                 this.cat_idx = i;
+                this.touch("cats");
                 cx.notify()
             }))
         });
@@ -1571,7 +1734,7 @@ impl SimpleLive {
             .flex_col()
             .gap_5()
             .child(div().flex().flex_wrap().gap_2().children(tabs))
-            .child(div().flex().flex_wrap().gap_3().children(subs))
+            .child(fade_in(div().flex().flex_wrap().gap_3().children(subs), ("cats", self.anim_gen("cats").unwrap_or(0))))
             .into_any_element()
     }
 
@@ -1617,6 +1780,7 @@ impl SimpleLive {
                 this.menu = if this.menu == Some(Menu::Danmaku) { None } else { Some(Menu::Danmaku) };
                 cx.notify()
             })))
+            .child(icon_btn("stats", "info").on_click(cx.listener(|this, _, _, cx| this.toggle_stats(cx))))
             .child(div().flex_1())
             .child(icon_btn("mute", if self.muted || self.volume == 0 { "volume_off" } else { "volume" }).on_click(cx.listener(|this, _, _, cx| {
                 let v = if this.volume == 0 { 50 } else { this.volume };
@@ -1633,6 +1797,28 @@ impl SimpleLive {
                 cx.notify()
             })))
             .child(icon_btn("fullscreen", if full { "fullscreen_exit" } else { "fullscreen" }).on_click(|_, window, _| window.toggle_fullscreen()))
+    }
+
+    /// 视频左上角的调试信息面板
+    fn render_stats(&self) -> impl IntoElement {
+        let rows = self.stats.iter().map(|(k, v)| div().flex().gap_3().child(div().w(px(56.)).flex_none().text_color(tint(0xffffff, 0x99)).child(*k)).child(div().text_color(rgb(0xffffff)).child(v.clone())));
+        div()
+            .absolute()
+            .top(px(12.))
+            .left(px(12.))
+            .max_w(px(440.))
+            .px_3()
+            .py_2p5()
+            .rounded_lg()
+            // 足够深才盖得住后面的滚动弹幕；细描边让它在黑边上也有轮廓（类似 macOS 的 HUD 面板）
+            .bg(tint(0x000000, 0xd9))
+            .border_1()
+            .border_color(tint(0xffffff, 0x1f))
+            .text_xs()
+            .line_height(px(18.))
+            .flex()
+            .flex_col()
+            .children(rows)
     }
 
     /// 右侧选择面板（同原项目的 showRightDialog）：清晰度或线路
@@ -1688,6 +1874,8 @@ impl SimpleLive {
             } else {
                 div().id("menu-list").flex_1().overflow_y_scroll().flex().flex_col().gap_0p5().children(rows)
             })
+            // 打开时从右侧轻轻滑入
+            .with_animation(("menu", menu as usize), Animation::new(Duration::from_millis(200)).with_easing(ease_out_quint()), |d, t| d.opacity(t).right(px(-16. * (1. - t))))
     }
 
     fn render_room(&self, room: &Room, full: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -1733,13 +1921,15 @@ impl SimpleLive {
                     .flex()
                     .flex_col()
                     .gap_0p5()
-                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).truncate().child(d.title.clone()))
+                    // GPUI 默认行高是字号的 1.618 倍，两行之间显得很空，收紧到接近 macOS 的行距
+                    .child(div().text_base().line_height(px(20.)).font_weight(FontWeight::SEMIBOLD).truncate().child(d.title.clone()))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
                             .text_xs()
+                            .line_height(px(16.))
                             .text_color(rgb(muted()))
                             .child(d.user_name.clone())
                             .child(if d.live {
@@ -1750,8 +1940,8 @@ impl SimpleLive {
                             .child(format!("{} 人气", fmt_count(room.online))),
                     ),
             )
-            .child(div().px_2p5().py_1().rounded_md().bg(tint(accent, 0x22)).text_xs().text_color(rgb(accent)).font_weight(FontWeight::MEDIUM).child(room.qualities.get(room.quality_idx).map_or(String::new(), |q| q.name.clone())))
-            .child(chip(format!("{} 条线路", room.urls.len())))
+            .children(room.qualities.get(room.quality_idx).map(|q| div().px_2p5().py_1().rounded_md().bg(tint(accent, 0x22)).text_xs().text_color(rgb(accent)).font_weight(FontWeight::MEDIUM).child(q.name.clone())))
+            .children((!room.urls.is_empty()).then(|| chip(format!("{} 条线路", room.urls.len()))))
             .child({
                 let followed = self.store.is_followed(self.site().id(), &d.room_id);
                 let b = div().id("follow").h(px(30.)).px_3().rounded_full().flex().items_center().cursor_pointer().text_xs().font_weight(FontWeight::MEDIUM);
@@ -1759,7 +1949,8 @@ impl SimpleLive {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_follow(cx)))
             });
 
-        let controls = self.render_controls(room, full, cx);
+        let offline = room.urls.is_empty();
+        let controls = (!offline).then(|| self.render_controls(room, full, cx));
         let video = div()
             .id("video")
             .group("video")
@@ -1776,8 +1967,25 @@ impl SimpleLive {
                     window.toggle_fullscreen()
                 }
             })
-            .child(self.video.clone())
-            .child(controls)
+            .child(if offline {
+                // 未开播：画面位置显示头像和提示，不放播放器控件
+                div()
+                    .size_full()
+                    .bg(rgb(0x000000))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .child(img(SharedString::from(room.detail.user_avatar.clone())).size(px(72.)).rounded_full().object_fit(ObjectFit::Cover).with_fallback(|| div().size(px(72.)).rounded_full().bg(rgb(hover())).into_any_element()))
+                    .child(div().text_base().font_weight(FontWeight::MEDIUM).text_color(rgb(0xffffff)).child("主播当前未开播"))
+                    .child(div().text_xs().text_color(tint(0xffffff, 0x99)).child("可以先关注，开播后在“我的关注”里会排在前面"))
+                    .into_any_element()
+            } else {
+                self.video.clone().into_any_element()
+            })
+            .children((self.show_stats && room.player.is_some()).then(|| self.render_stats()))
+            .children(controls)
             .children(self.menu.map(|m| self.render_menu(room, m, cx)));
         if full {
             return div().size_full().child(video.rounded_none().border_0()).into_any_element();
@@ -1787,7 +1995,8 @@ impl SimpleLive {
         chat_box = chat_box.w(px(CHAT_W)).h_full().flex_none();
         let chat = AnyView::from(room.chat.clone()).cached(chat_box);
 
-        div().size_full().flex().flex_col().child(header).child(div().flex_1().min_h(px(0.)).px(px(20.)).pb(px(20.)).flex().gap_4().child(video).children(self.show_chat.then_some(chat))).into_any_element()
+        let page = div().size_full().flex().flex_col().child(header).child(div().flex_1().min_h(px(0.)).px(px(20.)).pb(px(20.)).flex().gap_4().child(video).children(self.show_chat.then_some(chat)));
+        fade_in(page, ("room", room.id as usize)).into_any_element()
     }
 }
 

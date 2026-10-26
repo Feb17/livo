@@ -130,6 +130,24 @@ impl Douyu {
         Ok(RoomPage { has_more: !items.is_empty(), items })
     }
 
+    pub async fn search_anchors(&self, keyword: &str, page: u32) -> Result<(bool, Vec<AnchorItem>)> {
+        // filterType=0：包括未开播的主播（1 只返回在播的）
+        let q = [("kw", keyword.to_string()), ("page", page.to_string()), ("pageSize", "20".into()), ("filterType", "0".into())];
+        let v = self.get("https://www.douyu.com/japi/search/api/searchUser", &q, "https://www.douyu.com/search/", SEARCH_UA).await?;
+        if v["error"] != 0 {
+            return Err(anyhow!("斗鱼搜索失败: {}", s(&v["msg"])));
+        }
+        let items: Vec<_> = arr(&v["data"]["relateUser"])
+            .iter()
+            .map(|x| {
+                let a = &x["anchorInfo"];
+                // roomType 非 0 的是轮播等特殊房间，同原项目按未开播处理
+                AnchorItem { room_id: s(&a["rid"]), avatar: s(&a["avatar"]), user_name: s(&a["nickName"]), live: i(&a["isLive"]) == 1 && i(&a["roomType"]) == 0 }
+            })
+            .collect();
+        Ok((!items.is_empty(), items))
+    }
+
     async fn room_info(&self, room_id: &str) -> Result<Value> {
         let v = self.get(&format!("https://www.douyu.com/betard/{room_id}"), &[], &format!("https://www.douyu.com/{room_id}"), ROOM_UA).await?;
         let room = &v["room"];

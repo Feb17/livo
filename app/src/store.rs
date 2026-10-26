@@ -96,7 +96,7 @@ pub struct BiliAccount {
 }
 
 /// 播放页快捷键可配置的动作及默认按键（按键名用 GPUI 的 keystroke.key）
-pub const KEY_ACTIONS: [(&str, &str, &str); 8] = [
+pub const KEY_ACTIONS: [(&str, &str, &str); 9] = [
     ("fullscreen", "切换全屏", "f"),
     ("danmaku", "显示/隐藏弹幕", "d"),
     ("mute", "静音/取消静音", "m"),
@@ -105,6 +105,7 @@ pub const KEY_ACTIONS: [(&str, &str, &str); 8] = [
     ("volume_up", "调高音量", "up"),
     ("volume_down", "调低音量", "down"),
     ("pause", "暂停/继续", "space"),
+    ("stats", "显示/隐藏调试信息", "i"),
 ];
 
 fn default_keys() -> BTreeMap<String, String> {
@@ -112,7 +113,7 @@ fn default_keys() -> BTreeMap<String, String> {
 }
 
 /// 主页（侧边栏）页面的默认顺序，第一个是启动页
-pub const HOME_PAGES: [(&str, &str); 4] = [("recommend", "热门推荐"), ("follow", "我的关注"), ("category", "全部分类"), ("search", "搜索")];
+pub const HOME_PAGES: [(&str, &str); 3] = [("recommend", "热门推荐"), ("follow", "我的关注"), ("category", "全部分类")];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Follow {
@@ -198,13 +199,21 @@ impl Store {
 
     fn load_from(p: &std::path::Path) -> Self {
         let Ok(bytes) = std::fs::read(p) else { return Self::default() };
-        serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+        let mut s: Self = serde_json::from_slice(&bytes).unwrap_or_else(|e| {
             // 坏文件改名留着：不然下一次保存会用默认值把关注、观看记录和登录全部覆盖掉
             let bad = p.with_extension("json.bad");
             eprintln!("设置文件解析失败（{e}），原文件已另存为 {}", bad.display());
             let _ = std::fs::rename(p, &bad);
             Self::default()
-        })
+        });
+        // 页面顺序只留当前版本有的页面（旧版本还有“搜索”），缺的补在后面；设置页按下标移动，两边必须一致
+        s.home_sort.retain(|id| HOME_PAGES.iter().any(|(p, _)| p == id));
+        for (id, _) in HOME_PAGES {
+            if !s.home_sort.iter().any(|x| x == id) {
+                s.home_sort.push(id.to_string());
+            }
+        }
+        s
     }
 
     pub fn save(&self) {
@@ -264,6 +273,9 @@ mod tests {
         s.record(h("1", 3));
         assert_eq!(s.history.iter().map(|x| (x.room_id.as_str(), x.time)).collect::<Vec<_>>(), [("1", 3), ("2", 2)]);
         assert_eq!(s.key_for("fullscreen"), "f");
+        // 旧版本的页面顺序里有“搜索”：去掉，缺的页面补上
+        std::fs::write(&p, r#"{"home_sort":["search","category","recommend"]}"#).unwrap();
+        assert_eq!(Store::load_from(&p).home_sort, ["category", "recommend", "follow"]);
         std::fs::write(&p, "not json").unwrap();
         assert_eq!(Store::load_from(&p), Store::default());
         assert_eq!(std::fs::read(p.with_extension("json.bad")).unwrap(), b"not json", "坏文件要原样留着");

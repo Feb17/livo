@@ -218,6 +218,30 @@ impl Huya {
         Ok(RoomPage { has_more: i(&r["numFound"]) > (page as usize * SIZE) as i64, items })
     }
 
+    /// 主播在 response["1"]，直播间在 response["3"]；分页方式同 search_rooms
+    pub async fn search_anchors(&self, keyword: &str, page: u32) -> Result<(bool, Vec<AnchorItem>)> {
+        const SIZE: usize = 20;
+        let q = [
+            ("m", "Search".into()),
+            ("do", "getSearchContent".into()),
+            ("q", keyword.into()),
+            ("uid", "0".into()),
+            ("v", "1".into()),
+            ("typ", "-5".into()),
+            ("livestate", "0".into()),
+            ("rows", (page as usize * SIZE).to_string()),
+            ("start", "0".into()),
+        ];
+        let v = self.get_json("https://search.cdn.huya.com/", &q).await?;
+        let r = &v["response"]["1"];
+        let items = arr(&r["docs"])
+            .iter()
+            .skip((page as usize - 1) * SIZE)
+            .map(|x| AnchorItem { room_id: s(&x["room_id"]), avatar: s(&x["game_avatarUrl180"]), user_name: s(&x["game_nick"]), live: x["gameLiveOn"].as_bool().unwrap_or(false) })
+            .collect();
+        Ok((i(&r["numFound"]) > (page as usize * SIZE) as i64, items))
+    }
+
     /// 解析移动端房间页里的 HNF_GLOBAL_INIT，附带 topSid/subSid。
     async fn room_info(&self, room_id: &str) -> Result<(Value, i64, i64)> {
         let html = self.http.get(format!("https://m.huya.com/{room_id}")).header("user-agent", MOBILE_UA).send().await?.text().await?;

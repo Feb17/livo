@@ -21,6 +21,15 @@ pub struct RoomPage {
     pub items: Vec<RoomItem>,
 }
 
+/// 搜索到的主播
+#[derive(Clone, Debug)]
+pub struct AnchorItem {
+    pub room_id: String,
+    pub avatar: String,
+    pub user_name: String,
+    pub live: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct SubCategory {
     pub id: String,
@@ -127,6 +136,10 @@ impl Site {
     }
     pub async fn search_rooms(&self, keyword: &str, page: u32) -> Result<RoomPage> {
         each!(self, s => s.search_rooms(keyword, page).await)
+    }
+    /// 返回 (是否还有下一页, 主播)
+    pub async fn search_anchors(&self, keyword: &str, page: u32) -> Result<(bool, Vec<AnchorItem>)> {
+        each!(self, s => s.search_anchors(keyword, page).await)
     }
     pub async fn room_detail(&self, room_id: &str) -> Result<RoomDetail> {
         each!(self, s => s.room_detail(room_id).await)

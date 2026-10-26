@@ -195,32 +195,50 @@ impl SimpleLive {
             .into_any_element()
     }
 
+    /// 开关（macOS 风格）：点击后拖柄滑过去、轨道颜色渐变
     fn switch(&self, id: &'static str, on: bool, set: fn(&mut Self, bool), cx: &mut Context<Self>) -> impl IntoElement {
         let accent = self.accent();
-        div()
-            .id(id)
-            .w(px(40.))
-            .h(px(22.))
-            .flex_none()
-            .rounded_full()
-            .p(px(2.))
-            .cursor_pointer()
-            .bg(if on { rgb(accent) } else { rgb(hover()) })
-            .flex()
-            .when(on, |d| d.justify_end())
-            .child(div().size(px(18.)).rounded_full().bg(rgb(0xffffff)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                set(this, !on);
-                this.save_and_notify(cx)
-            }))
+        // p：0 关、1 开，轨道颜色和拖柄位置都按它插值
+        let track = move |p: f32| {
+            div()
+                .size_full()
+                .relative()
+                .rounded_full()
+                .bg(rgb(hover()))
+                .child(div().absolute().inset_0().rounded_full().bg(rgb(accent)).opacity(p))
+                .child(div().absolute().top(px(2.)).left(px(2. + 18. * p)).size(px(18.)).rounded_full().bg(rgb(0xffffff)).shadow_sm())
+        };
+        let to = if on { 1. } else { 0. };
+        let body = match self.anim_gen(id) {
+            Some(gen) => track(1. - to).with_animation((id, gen), Animation::new(Duration::from_millis(200)).with_easing(ease_in_out), move |_, t| track(1. - to + (2. * to - 1.) * t)).into_any_element(),
+            None => track(to).into_any_element(),
+        };
+        div().id(id).w(px(40.)).h(px(22.)).flex_none().cursor_pointer().child(body).on_click(cx.listener(move |this, _, _, cx| {
+            this.touch(id);
+            set(this, !on);
+            this.save_and_notify(cx)
+        }))
     }
 
+    /// 分段控件（macOS 风格）：灰色轨道上浮起一块选中背景，刚点的那一下淡入
     fn choices(&self, id: &'static str, options: &[&'static str], selected: usize, set: fn(&mut Self, usize), cx: &mut Context<Self>) -> impl IntoElement {
-        let accent = self.accent();
-        div().flex().flex_none().gap_1().p(px(3.)).rounded_lg().bg(rgb(hover())).children(options.iter().enumerate().map(|(i, label)| {
+        let anim = self.anim_gen(id);
+        div().flex().flex_none().gap_0p5().p(px(2.)).rounded_lg().bg(rgb(hover())).children(options.iter().enumerate().map(|(i, label)| {
             let on = i == selected;
-            let b = div().id(SharedString::from(format!("{id}-{i}"))).px_3().py_1().rounded_md().text_xs().cursor_pointer();
-            if on { b.bg(rgb(accent)).text_color(rgb(0x111111)).font_weight(FontWeight::MEDIUM) } else { b.text_color(rgb(text())) }.child(*label).on_click(cx.listener(move |this, _, _, cx| {
+            let b = div().id(SharedString::from(format!("{id}-{i}"))).relative().px_3().py_1().rounded_md().text_xs().cursor_pointer();
+            let b = if on {
+                let thumb = div().absolute().inset_0().rounded_md().bg(rgb(raised())).shadow_sm();
+                let thumb = match anim {
+                    Some(gen) => thumb.with_animation((id, gen), Animation::new(Duration::from_millis(180)).with_easing(ease_out_quint()), |d, t| d.opacity(t)).into_any_element(),
+                    None => thumb.into_any_element(),
+                };
+                b.text_color(rgb(text())).font_weight(FontWeight::MEDIUM).child(thumb)
+            } else {
+                b.text_color(rgb(muted())).hover(|s| s.text_color(rgb(text())))
+            };
+            // 文字要盖在浮起的背景上面
+            b.child(div().relative().child(*label)).on_click(cx.listener(move |this, _, _, cx| {
+                this.touch(id);
                 set(this, i);
                 this.save_and_notify(cx)
             }))
