@@ -35,7 +35,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       is_tag: ${{ steps.v.outputs.is_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
       - id: v
@@ -62,7 +62,7 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
       - uses: dtolnay/rust-toolchain@stable
@@ -98,7 +98,7 @@ jobs:
           Copy-Item LICENSE "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/*.zip
@@ -107,7 +107,7 @@ jobs:
     needs: version
     runs-on: macos-15 # Apple silicon
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
       - uses: dtolnay/rust-toolchain@stable
@@ -117,7 +117,7 @@ jobs:
       - name: 构建并打包 dmg
         run: scripts/bundle-macos.sh "${{ needs.version.outputs.version }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: dist/*.dmg
@@ -129,7 +129,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.REF }}
           sparse-checkout: app_version.json
@@ -143,7 +143,7 @@ jobs:
             jq -r .version_desc app_version.json > notes.md
             echo "notes=notes.md" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: 签名安装包
@@ -155,7 +155,7 @@ jobs:
           printf '%s\n' "$KEY" > key.pem
           for f in artifacts/*/*.dmg artifacts/*/*.zip; do openssl pkeyutl -sign -inkey key.pem -rawin -in "$f" -out "$f.sig"; done
           rm key.pem
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: ${{ needs.version.outputs.version }}
