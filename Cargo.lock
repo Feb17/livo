@@ -3069,6 +3069,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
+name = "livo"
+version = "0.1.4"
+dependencies = [
+ "anyhow",
+ "core-foundation 0.10.0",
+ "core-video",
+ "gpui",
+ "image",
+ "livo_core",
+ "qrcode",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "livo_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "brotli 7.0.0",
+ "flate2",
+ "futures-util",
+ "md5",
+ "regex",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5088,40 +5122,6 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
-
-[[package]]
-name = "simple_live_core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "brotli 7.0.0",
- "flate2",
- "futures-util",
- "md5",
- "regex",
- "reqwest",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
-]
-
-[[package]]
-name = "simple_live_gpui"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "core-foundation 0.10.0",
- "core-video",
- "gpui",
- "image",
- "qrcode",
- "reqwest",
- "serde",
- "serde_json",
- "simple_live_core",
- "tokio",
-]
 
 [[package]]
 name = "simplecss"

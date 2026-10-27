@@ -1,5 +1,5 @@
-<p align="center"><img width="128" src="app/assets/icon.png" alt="Simple Live"></p>
-<h2 align="center">Simple Live（Rust + GPUI 版）</h2>
+<p align="center"><img width="128" src="app/assets/icon.png" alt="Livo"></p>
+<h2 align="center">Livo（Rust + GPUI 版）</h2>
 
 <p align="center">用 Rust 和 <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">GPUI</a> 重写的 <a href="https://github.com/xiaoyaocz/dart_simple_live">Simple Live</a>：轻量、高性能的聚合直播客户端。</p>
 
@@ -15,8 +15,8 @@
 
 见 [Releases](../../releases)：
 
-- **macOS（Apple silicon）**：`SimpleLive-macOS-arm64-*.dmg`。应用未经 Apple 公证，首次打开若提示“已损坏/无法验证”，执行 `xattr -cr "/Applications/Simple Live.app"` 后再打开。
-- **Windows（x64）**：`SimpleLive-Windows-x64-*-portable.zip`，解压后运行 `SimpleLive.exe`。
+- **macOS（Apple silicon）**：`Livo-macOS-arm64-*.dmg`。应用未经 Apple 公证，首次打开若提示“已损坏/无法验证”，执行 `xattr -cr "/Applications/Livo.app"` 后再打开。
+- **Windows（x64）**：`Livo-Windows-x64-*-portable.zip`，解压后运行 `Livo.exe`。
 
 ## 从源码构建
 
@@ -25,7 +25,7 @@
 ```bash
 # macOS
 brew install mpv
-cargo run --release -p simple_live_gpui
+cargo run --release -p livo
 
 # 打包 macOS .app 和 dmg，产物在 dist/（会下载 media-kit 的精简版 libmpv 打进包里，不用 Homebrew 的）
 scripts/bundle-macos.sh
@@ -33,7 +33,7 @@ scripts/bundle-macos.sh
 
 Windows 需要 [libmpv 开发包](https://github.com/shinchiro/mpv-winbuild-cmake/releases)（`mpv-dev-x86_64-*.7z`）：解压后把 `libmpv.dll.a` 复制为 `mpv.lib`，设置环境变量 `MPV_LIB_DIR` 指向该目录再 `cargo build --release`，运行时把 `libmpv-2.dll` 放在 exe 旁边。
 
-接口自测（会访问各平台线上接口）：`cargo run --example smoke -p simple_live_core`
+接口自测（会访问各平台线上接口）：`cargo run --example smoke -p livo_core`
 
 ## 发版
 

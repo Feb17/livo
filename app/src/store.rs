@@ -188,7 +188,7 @@ fn path() -> PathBuf {
     } else {
         std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config"))
     };
-    base.join("SimpleLive/settings.json")
+    base.join("Livo/settings.json")
 }
 
 impl Store {
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn roundtrip_and_tolerates_bad_files() {
-        let dir = std::env::temp_dir().join(format!("simple_live_store_test_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("livo_store_test_{}", std::process::id()));
         let p = dir.join("settings.json");
         let mut s = Store::default();
         s.danmaku.font = 24.;

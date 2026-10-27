@@ -14,10 +14,10 @@ use gpui::{
     HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, RetainAllImageCache, Rgba, ScrollHandle, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use icons::icon;
-use simple_live_core::{danmaku, AnchorItem, Category, LiveMessage, PlayQuality, RoomDetail, RoomItem, RoomPage, Site, SubCategory};
+use livo_core::{danmaku, AnchorItem, Category, LiveMessage, PlayQuality, RoomDetail, RoomItem, RoomPage, Site, SubCategory};
 use std::cell::Cell;
 use std::ops::Range;
-use simple_live_core::bilibili::BiliBili;
+use livo_core::bilibili::BiliBili;
 use store::{DanmakuStyle, Follow, History, Store, Theme, HOME_PAGES, KEY_ACTIONS};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -327,7 +327,7 @@ impl Render for Video {
     }
 }
 
-struct SimpleLive {
+struct Livo {
     sites: Vec<Arc<Site>>,
     site_idx: usize,
     focus: FocusHandle,
@@ -388,7 +388,7 @@ struct SimpleLive {
     images: Entity<RetainAllImageCache>,
 }
 
-impl SimpleLive {
+impl Livo {
     fn new(cx: &mut Context<Self>) -> Self {
         let store = Store::load();
         let mut sites: Vec<Arc<Site>> = Site::all()
@@ -732,7 +732,7 @@ impl SimpleLive {
             let detail = site.room_detail(&room_id).await?;
             // 未开播也进直播间（能看简介、关注、看弹幕），只是不取播放地址
             if !detail.live {
-                return Ok((detail, vec![], 0, simple_live_core::PlayUrl::default()));
+                return Ok((detail, vec![], 0, livo_core::PlayUrl::default()));
             }
             let q = site.play_qualities(&detail.room_id).await?;
             let idx = default_quality(&q, level, memory.as_deref());
@@ -1255,7 +1255,7 @@ fn skeleton(w: f32, h: f32) -> gpui::Div {
     div().w(px(w)).h(px(h)).rounded_lg().bg(rgb(surface()))
 }
 
-impl Render for SimpleLive {
+impl Render for Livo {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 外观设置：跟随系统时看窗口当前外观
         let light = match self.store.theme {
@@ -1276,7 +1276,7 @@ impl Render for SimpleLive {
         };
         let accent = self.accent();
         div()
-            .key_context("SimpleLive")
+            .key_context("Livo")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev, window, cx| this.on_key(ev, window, cx)))
             .size_full()
@@ -1322,7 +1322,7 @@ impl Render for SimpleLive {
     }
 }
 
-impl SimpleLive {
+impl Livo {
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let accent = self.accent();
         let in_room = self.room.is_some();
@@ -1372,7 +1372,7 @@ impl SimpleLive {
                             .text_color(rgb(0xffffff))
                             .child("S"),
                     )
-                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).child("Simple Live")),
+                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).child("Livo")),
             )
             .child(section_label("平台"))
             .child(div().flex().flex_col().gap_0p5().children(sites))
@@ -2021,7 +2021,7 @@ fn bytes_to_utf16(s: &str, r: Range<usize>) -> Range<usize> {
 }
 
 /// 搜索框的文字输入：光标始终在末尾，支持输入法组字（marked text）
-impl EntityInputHandler for SimpleLive {
+impl EntityInputHandler for Livo {
     fn text_for_range(&mut self, range: Range<usize>, adjusted: &mut Option<Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
         let r = utf16_to_bytes(&self.keyword, range);
         *adjusted = Some(bytes_to_utf16(&self.keyword, r.clone()));
@@ -2073,14 +2073,14 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(960.), px(600.))),
-            titlebar: Some(TitlebarOptions { title: Some("Simple Live".into()), appears_transparent: true, traffic_light_position: Some(point(px(16.), px(16.))) }),
+            titlebar: Some(TitlebarOptions { title: Some("Livo".into()), appears_transparent: true, traffic_light_position: Some(point(px(16.), px(16.))) }),
             ..Default::default()
         };
         cx.open_window(options, |window, cx| {
             let view = cx.new(|cx| {
                 // 外观设置“跟随系统”：系统切换深浅色时重绘
-                cx.observe_window_appearance(window, |this: &mut SimpleLive, _, cx| this.refresh_theme(cx)).detach();
-                SimpleLive::new(cx)
+                cx.observe_window_appearance(window, |this: &mut Livo, _, cx| this.refresh_theme(cx)).detach();
+                Livo::new(cx)
             });
             window.focus(&view.read(cx).focus);
             view

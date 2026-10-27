@@ -1,4 +1,4 @@
-use simple_live_core::{danmaku, Site};
+use livo_core::{danmaku, Site};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
