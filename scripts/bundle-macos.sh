@@ -1,5 +1,5 @@
 #!/bin/bash
-# 打包 macOS（Apple silicon）：Simple Live.app + dmg
+# 打包 macOS（Apple silicon）：Livo.app + dmg
 # libmpv 用 media-kit 的精简版（原项目 macOS 也用它）：只编了直播用到的解码器和协议，
 # 比 Homebrew 的 mpv 连同依赖小一半多（包内库 58MB → 20MB）。首次运行会下载并校验
 # 用法：scripts/bundle-macos.sh [版本号]   产物在 dist/
@@ -8,8 +8,8 @@ cd "$(dirname "$0")/.."
 
 VERSION="${1:-$(grep -m1 '^version' app/Cargo.toml | cut -d'"' -f2)}"
 VERSION="${VERSION#v}"
-APP="dist/Simple Live.app"
-DMG="dist/SimpleLive-macOS-arm64-v${VERSION}.dmg"
+APP="dist/Livo.app"
+DMG="dist/Livo-macOS-arm64-v${VERSION}.dmg"
 
 LIBMPV_VER=v0.7.3
 LIBMPV_PKG="libmpv-libs_${LIBMPV_VER}_macos-arm64-video-default"
@@ -26,20 +26,20 @@ if [ ! -d "$LIBMPV_DIR" ]; then
   rmdir "$tmp"
 fi
 
-MPV_LIB_DIR="$LIBMPV_DIR" cargo build --release -p simple_live_gpui
+MPV_LIB_DIR="$LIBMPV_DIR" cargo build --release -p livo
 
 rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
-cp target/release/simple_live_gpui "$APP/Contents/MacOS/"
+cp target/release/livo "$APP/Contents/MacOS/"
 cp app/assets/AppIcon.icns "$APP/Contents/Resources/"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Simple Live</string>
-  <key>CFBundleDisplayName</key><string>Simple Live</string>
-  <key>CFBundleIdentifier</key><string>io.github.feb17.simplelive</string>
-  <key>CFBundleExecutable</key><string>simple_live_gpui</string>
+  <key>CFBundleName</key><string>Livo</string>
+  <key>CFBundleDisplayName</key><string>Livo</string>
+  <key>CFBundleIdentifier</key><string>io.github.feb17.livo</string>
+  <key>CFBundleExecutable</key><string>livo</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
@@ -52,12 +52,12 @@ PLIST
 
 # 这套库之间都用 @rpath 互相引用，拷进 Frameworks 再给主程序加一条 rpath 即可
 cp "$LIBMPV_DIR"/*.dylib "$APP/Contents/Frameworks/"
-install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/simple_live_gpui"
+install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/livo"
 
 # 加 rpath 后二进制签名已失效；Apple silicon 上未签名的代码无法运行。
 # 先清掉扩展属性（否则 codesign 报 “resource fork … not allowed”），再统一做 ad-hoc 签名
 xattr -cr "$APP"
 codesign --force --deep --sign - "$APP"
 
-hdiutil create -volname "Simple Live" -srcfolder "$APP" -ov -format UDZO "$DMG"
+hdiutil create -volname "Livo" -srcfolder "$APP" -ov -format UDZO "$DMG"
 echo "已生成：$DMG"

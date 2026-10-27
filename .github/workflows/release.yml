@@ -86,14 +86,14 @@ jobs:
           "MPV_LIB_DIR=$pwd\mpv" >> $env:GITHUB_ENV
 
       - name: 构建
-        run: cargo build --release -p simple_live_gpui
+        run: cargo build --release -p livo
 
       - name: 打包 portable
         shell: pwsh
         run: |
-          $name = "SimpleLive-Windows-x64-v${{ needs.version.outputs.version }}-portable"
+          $name = "Livo-Windows-x64-v${{ needs.version.outputs.version }}-portable"
           New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
-          Copy-Item target/release/simple_live_gpui.exe "dist/$name/SimpleLive.exe"
+          Copy-Item target/release/livo.exe "dist/$name/Livo.exe"
           Copy-Item mpv/libmpv-2.dll "dist/$name/"
           Copy-Item LICENSE "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"

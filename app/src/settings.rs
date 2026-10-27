@@ -1,7 +1,7 @@
 //! 设置页与观看记录页（同原项目“我的”页面下的设置项，只保留桌面端有意义的部分）。
 use super::*;
 use gpui::AnyElement;
-use simple_live_core::bilibili::QrPoll;
+use livo_core::bilibili::QrPoll;
 
 /// 按键名显示成人能读的样子
 pub(crate) fn key_label(k: &str) -> String {
@@ -27,7 +27,7 @@ fn time_ago(t: u64) -> String {
     }
 }
 
-impl SimpleLive {
+impl Livo {
     /// 主题变了：根视图之外，缓存渲染的弹幕面板也要重绘
     pub(crate) fn refresh_theme(&mut self, cx: &mut Context<Self>) {
         if let Some(room) = &self.room {

@@ -390,12 +390,12 @@ mod tests {
         assert_eq!(fit(1920, 1080, view(2560, 1440), 1280), (1280, 720)); // max_w 封顶
     }
 
-    /// 真实直播流（需要网络）：cargo test -p simple_live_gpui -- --ignored
+    /// 真实直播流（需要网络）：cargo test -p livo -- --ignored
     #[test]
     #[ignore]
     fn plays_live_streams() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        for site in simple_live_core::Site::all() {
+        for site in livo_core::Site::all() {
             let pu = rt.block_on(async {
                 let r = site.recommend_rooms(1).await?;
                 let q = site.play_qualities(&r.items[0].room_id).await?;
