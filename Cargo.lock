@@ -3057,6 +3057,7 @@ dependencies = [
  "gpui",
  "image",
  "livo_core",
+ "objc",
  "qrcode",
  "reqwest",
  "ring",

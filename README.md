@@ -16,7 +16,7 @@
 见 [Releases](../../releases)：
 
 - **macOS（Apple silicon）**：`Livo-macOS-arm64-*.dmg`。应用未经 Apple 公证，首次打开若提示“已损坏/无法验证”，执行 `xattr -cr "/Applications/Livo.app"` 后再打开。
-- **Windows（x64）**：`Livo-Windows-x64-*-portable.zip`，解压后运行 `Livo.exe`。
+- **Windows**：暂停维护，最后一个 Windows 版是 [v0.1.5](../../releases/tag/v0.1.5)。
 
 ## 从源码构建
 
@@ -31,16 +31,14 @@ cargo run --release -p livo
 scripts/bundle-macos.sh
 ```
 
-Windows 需要 [libmpv 开发包](https://github.com/shinchiro/mpv-winbuild-cmake/releases)（`mpv-dev-x86_64-*.7z`）：解压后把 `libmpv.dll.a` 复制为 `mpv.lib`，设置环境变量 `MPV_LIB_DIR` 指向该目录再 `cargo build --release`，运行时把 `libmpv-2.dll` 放在 exe 旁边。
-
 接口自测（会访问各平台线上接口）：`cargo run --example smoke -p livo_core`
 
 ## 发版
 
-先改好 [`app_version.json`](app_version.json)（`version` 版本号、`version_desc` 更新说明、`prerelease` 是否预发行）并提交，再推送同版本的标签（如 `git tag v0.1.2 && git push origin v0.1.2`），[release 工作流](.github/workflows/release.yml)会构建 Windows portable 包和 macOS dmg，按这个文件创建 Release；标签和文件里的版本号不一致时直接失败。也可以在 Actions 页面手动运行，只产出构建产物。
+先改好 [`app_version.json`](app_version.json)（`version` 版本号、`version_desc` 更新说明、`prerelease` 是否预发行）并提交，再推送同版本的标签（如 `git tag v0.1.2 && git push origin v0.1.2`），[release 工作流](.github/workflows/release.yml)会构建 macOS dmg，按这个文件创建 Release；标签和文件里的版本号不一致时直接失败。也可以在 Actions 页面手动运行，只产出构建产物。
 
 ## 致谢与许可证
 
-平台接口、弹幕协议等逻辑移植自 [xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live)（及其社区维护分支），斗鱼签名与虎牙部分参考了 [hua0512/rust-srec](https://github.com/hua0512/rust-srec)。播放基于 [mpv](https://mpv.io)，macOS 版内置 [media-kit/libmpv-darwin-build](https://github.com/media-kit/libmpv-darwin-build) 的精简版 libmpv，Windows 版内置 [shinchiro/mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake) 的 libmpv。感谢原作者和所有上游开源项目。
+平台接口、弹幕协议等逻辑移植自 [xiaoyaocz/dart_simple_live](https://github.com/xiaoyaocz/dart_simple_live)（及其社区维护分支），斗鱼签名与虎牙部分参考了 [hua0512/rust-srec](https://github.com/hua0512/rust-srec)。播放基于 [mpv](https://mpv.io)，内置 [media-kit/libmpv-darwin-build](https://github.com/media-kit/libmpv-darwin-build) 的精简版 libmpv。感谢原作者和所有上游开源项目。
 
 本项目沿用原项目的 [GPL-3.0](LICENSE) 许可证。

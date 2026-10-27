@@ -1,9 +1,7 @@
-// Windows 发行版不弹控制台窗口
-#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
-
 mod about;
 mod icons;
 mod img_http;
+mod menus;
 mod mpv;
 mod settings;
 mod store;
@@ -11,7 +9,7 @@ mod store;
 mod mpv_gl;
 
 use gpui::{
-    canvas, div, ease_in_out, ease_out_quint, image_cache, img, list, relative, Animation, AnimationExt, AnyElement, ShapedLine, ListAlignment, ListState, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
+    canvas, div, ClipboardItem, ease_in_out, ease_out_quint, image_cache, img, list, relative, Animation, AnimationExt, AnyElement, ShapedLine, ListAlignment, ListState, AnyView, ElementInputHandler, EntityInputHandler, UTF16Selection, UnderlineStyle, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, FocusHandle, FontWeight,
     HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, RenderImage, RetainAllImageCache, Rgba, ScrollHandle, SharedString, StyleRefinement, StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use icons::icon;
@@ -1152,12 +1150,24 @@ impl Livo {
         }
     }
 
+    /// 编辑 > 粘贴：只取第一行，追加到搜索关键词
+    fn paste(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) else { return };
+        self.keyword.push_str(text.lines().next().unwrap_or("").trim());
+        self.marked = None;
+        cx.notify();
+    }
+
     /// 输入法回调给的 UTF-16 范围换成关键词里的字节范围；没给就替换正在组字的部分，否则追加到末尾
     fn input_range(&self, range: Option<Range<usize>>) -> Range<usize> {
         range.map(|r| utf16_to_bytes(&self.keyword, r)).or(self.marked.clone()).unwrap_or(self.keyword.len()..self.keyword.len())
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // ⌘/⌃ 组合键归菜单（menus.rs），不当成单键快捷键或搜索输入
+        if ev.keystroke.modifiers.platform || ev.keystroke.modifiers.control {
+            return;
+        }
         let key = ev.keystroke.key.as_str();
         // 正在录入快捷键：这一下按键就是新绑定（Esc 取消），并且不要再交给搜索框
         if let Some(action) = self.capturing.take() {
@@ -1381,6 +1391,44 @@ impl Render for Livo {
             .key_context("Livo")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev, window, cx| this.on_key(ev, window, cx)))
+            // 菜单栏（menus.rs）：没注册的 action 对应的菜单项显示为灰色
+            .on_action(cx.listener(|this, _: &menus::About, _, cx| this.go(Tab::About, cx)))
+            .on_action(cx.listener(|this, _: &menus::CheckUpdate, _, cx| {
+                this.go(Tab::About, cx);
+                this.check_update(false, cx)
+            }))
+            .on_action(cx.listener(|this, _: &menus::Settings, _, cx| this.go(Tab::Settings, cx)))
+            .on_action(cx.listener(|this, _: &menus::ShowRecommend, _, cx| this.go(Tab::Recommend, cx)))
+            .on_action(cx.listener(|this, _: &menus::ShowCategory, _, cx| this.go(Tab::Category, cx)))
+            .on_action(cx.listener(|this, _: &menus::ShowFollow, _, cx| this.go(Tab::Follow, cx)))
+            .on_action(cx.listener(|this, _: &menus::ShowHistory, _, cx| this.go(Tab::History, cx)))
+            .on_action(|_: &menus::ToggleFullScreen, window, _| window.toggle_fullscreen())
+            .on_action(|_: &menus::Minimize, window, _| window.minimize_window())
+            .on_action(|_: &menus::Zoom, window, _| window.zoom_window())
+            .on_action(|_: &menus::CloseWindow, window, _| window.remove_window())
+            .when(self.room.is_none(), |d| d.on_action(cx.listener(|this, _: &menus::EditPaste, _, cx| this.paste(cx))))
+            .when(self.room.is_none() && !self.keyword.is_empty(), |d| {
+                d.on_action(cx.listener(|this, _: &menus::EditCopy, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(this.keyword.clone()))))
+                    .on_action(cx.listener(|this, _: &menus::EditCut, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(std::mem::take(&mut this.keyword)));
+                        this.marked = None;
+                        cx.notify()
+                    }))
+            })
+            .when(self.room.is_some(), |d| {
+                d.on_action(cx.listener(|this, _: &menus::TogglePause, w, cx| this.run_action("pause", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::SeekBack, w, cx| this.run_action("seek_back", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::SeekForward, w, cx| this.run_action("seek_forward", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::ToggleMute, w, cx| this.run_action("mute", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::VolumeUp, w, cx| this.run_action("volume_up", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::VolumeDown, w, cx| this.run_action("volume_down", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::ToggleDanmaku, w, cx| this.run_action("danmaku", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::ToggleChat, w, cx| this.run_action("chat", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::ToggleStats, w, cx| this.run_action("stats", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::Refresh, w, cx| this.run_action("refresh", w, cx)))
+                    .on_action(cx.listener(|this, _: &menus::ToggleFollow, _, cx| this.toggle_follow(cx)))
+                    .on_action(cx.listener(|this, _: &menus::CloseRoom, _, cx| this.close_room(cx)))
+            })
             .size_full()
             .flex()
             .bg(rgb(bg()))
@@ -2189,6 +2237,14 @@ impl EntityInputHandler for Livo {
 
 fn main() {
     Application::new().with_assets(icons::Icons).with_http_client(Arc::new(img_http::ImageClient::new())).run(|cx: &mut App| {
+        menus::init(cx);
+        // 单窗口应用：关掉主窗口就退出（同“系统设置”），否则程序留在程序坞里却没有窗口
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit()
+            }
+        })
+        .detach();
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),

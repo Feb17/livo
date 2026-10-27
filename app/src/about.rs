@@ -1,6 +1,6 @@
 //! 检查更新：读仓库里的 app_version.json（发布流程以它为准；不用 Releases API，它每 IP 每小时只给 60 次），
 //! 和当前版本比较，预发行版只有开了测试版通道才收。
-//! 自动更新：下载 Release 里的 dmg / portable zip，用内置公钥验过 .sig 签名后解出来放在安装位置旁边，
+//! 自动更新：下载 Release 里的 dmg，用内置公钥验过 .sig 签名后解出来放在安装位置旁边，
 //! 退出时由一个小脚本等本进程结束后替换（“立即重启”则替换完再打开）。签名私钥在仓库 secret LIVO_UPDATE_KEY。
 use crate::{rt, Livo};
 use anyhow::{bail, ensure, Context as _};
@@ -65,38 +65,25 @@ fn verify(key: &[u8], pkg: &[u8], sig: &[u8]) -> anyhow::Result<()> {
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key).verify(pkg, sig).map_err(|_| anyhow::anyhow!("签名校验失败"))
 }
 
-/// 发布包的下载地址，文件名同 release.yml / bundle-macos.sh；只发了 Apple silicon 和 Windows x64
+/// 发布包的下载地址，文件名同 bundle-macos.sh；只发了 Apple silicon
 fn asset_url(v: &str) -> Option<String> {
-    let name = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        format!("Livo-macOS-arm64-v{v}.dmg")
-    } else if cfg!(all(windows, target_arch = "x86_64")) {
-        format!("Livo-Windows-x64-v{v}-portable.zip")
-    } else {
-        return None;
-    };
-    Some(format!("{REPO}/releases/download/v{v}/{name}"))
+    cfg!(all(target_os = "macos", target_arch = "aarch64")).then(|| format!("{REPO}/releases/download/v{v}/Livo-macOS-arm64-v{v}.dmg"))
 }
 
-/// 自己的安装位置：macOS 是 .app 包，Windows 是 portable 目录；cargo 构建（target/ 下）返回 None，只能手动下载
+/// 自己的安装位置：.app 包；cargo 构建（target/ 下）返回 None，只能手动下载
 fn install_target() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let dir = exe.parent()?;
     if dir.parent().is_some_and(|p| p.ends_with("target")) {
         return None;
     }
-    if cfg!(target_os = "macos") {
-        let app = dir.parent()?.parent()?;
-        (app.extension()? == "app").then(|| app.to_path_buf())
-    } else if cfg!(windows) {
-        Some(dir.to_path_buf())
-    } else {
-        None
-    }
+    let app = dir.parent()?.parent()?;
+    (app.extension()? == "app").then(|| app.to_path_buf())
 }
 
 /// 新版本先放在安装位置旁边：同一个卷上改名替换是原子的，没有写权限也能在下载完就发现
 fn staged_path(target: &Path) -> PathBuf {
-    target.with_file_name(if cfg!(target_os = "macos") { ".Livo-update.app" } else { ".livo-update" })
+    target.with_file_name(".Livo-update.app")
 }
 
 pub fn can_install(version: &str) -> bool {
@@ -104,17 +91,9 @@ pub fn can_install(version: &str) -> bool {
 }
 
 fn run(cmd: &mut Command) -> anyhow::Result<()> {
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(cmd, 0x0800_0000); // CREATE_NO_WINDOW
     let out = cmd.output().with_context(|| format!("{cmd:?}"))?;
     ensure!(out.status.success(), "{:?}: {}", cmd.get_program(), String::from_utf8_lossy(&out.stderr).trim());
     Ok(())
-}
-
-/// PowerShell 单引号字符串
-#[cfg_attr(not(windows), allow(dead_code))]
-fn ps_quote(p: &Path) -> String {
-    format!("'{}'", p.display().to_string().replace('\'', "''"))
 }
 
 /// 把下载的安装包解到 staged
@@ -123,26 +102,13 @@ fn stage(pkg: &[u8], staged: &Path) -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp)?;
     let _ = std::fs::remove_dir_all(staged);
-    if cfg!(target_os = "macos") {
-        let (dmg, mnt) = (tmp.join("Livo.dmg"), tmp.join("mnt"));
-        std::fs::write(&dmg, pkg)?;
-        run(Command::new("hdiutil").args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"]).arg(&mnt).arg(&dmg))?;
-        let copied = run(Command::new("ditto").arg(mnt.join("Livo.app")).arg(staged));
-        let _ = Command::new("hdiutil").args(["detach", "-force"]).arg(&mnt).output();
-        copied?;
-        ensure!(staged.join("Contents/MacOS/livo").is_file(), "安装包里没有 Livo.app");
-    } else {
-        // 解到安装目录旁边再改名：temp 可能和安装目录不在一个盘
-        let zip = tmp.join("Livo.zip");
-        std::fs::write(&zip, pkg)?;
-        let out = staged.with_extension("unzip");
-        let _ = std::fs::remove_dir_all(&out);
-        run(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command"]).arg(format!("Expand-Archive -LiteralPath {} -DestinationPath {} -Force", ps_quote(&zip), ps_quote(&out))))?;
-        // zip 里是一层 Livo-Windows-x64-vX-portable 目录
-        let inner = std::fs::read_dir(&out)?.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.join("Livo.exe").is_file()).context("安装包里没有 Livo.exe")?;
-        std::fs::rename(inner, staged)?;
-        let _ = std::fs::remove_dir_all(&out);
-    }
+    let (dmg, mnt) = (tmp.join("Livo.dmg"), tmp.join("mnt"));
+    std::fs::write(&dmg, pkg)?;
+    run(Command::new("hdiutil").args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"]).arg(&mnt).arg(&dmg))?;
+    let copied = run(Command::new("ditto").arg(mnt.join("Livo.app")).arg(staged));
+    let _ = Command::new("hdiutil").args(["detach", "-force"]).arg(&mnt).output();
+    copied?;
+    ensure!(staged.join("Contents/MacOS/livo").is_file(), "安装包里没有 Livo.app");
     let _ = std::fs::remove_dir_all(&tmp);
     Ok(())
 }
@@ -177,25 +143,7 @@ fn spawn_installer(relaunch: bool) -> anyhow::Result<()> {
     let target = install_target().context("找不到安装位置")?;
     let staged = staged_path(&target);
     let pid = std::process::id().to_string();
-    if cfg!(target_os = "macos") {
-        Command::new("/bin/sh").args(["-c", MAC_INSTALL_SH, "sh", &pid]).arg(&staged).arg(&target).arg(if relaunch { "1" } else { "0" }).spawn()?;
-    } else {
-        // 运行中的 exe 和 dll 不能覆盖，等进程退出再拷
-        let mut ps = format!(
-            "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 300; Copy-Item -Path {} -Destination {} -Recurse -Force; Remove-Item -LiteralPath {} -Recurse -Force",
-            ps_quote(&staged.join("*")),
-            ps_quote(&target),
-            ps_quote(&staged)
-        );
-        if relaunch {
-            ps += &format!("; Start-Process -FilePath {}", ps_quote(&target.join("Livo.exe")));
-        }
-        let mut cmd = Command::new("powershell");
-        cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps]);
-        #[cfg(windows)]
-        std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
-        cmd.spawn()?;
-    }
+    Command::new("/bin/sh").args(["-c", MAC_INSTALL_SH, "sh", &pid]).arg(&staged).arg(&target).arg(if relaunch { "1" } else { "0" }).spawn()?;
     Ok(())
 }
 

@@ -189,14 +189,7 @@ const MAX_HISTORY: usize = 200;
 
 fn path() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    let base = if cfg!(target_os = "macos") {
-        home.join("Library/Application Support")
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or(home)
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config"))
-    };
-    base.join("Livo/settings.json")
+    home.join("Library/Application Support/Livo/settings.json")
 }
 
 impl Store {

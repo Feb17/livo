@@ -1,4 +1,4 @@
-# 发版：Windows x64 portable 包 + macOS Apple silicon dmg（参考 SlotSun/dart_simple_live 的 publish_app_release）
+# 发版：macOS Apple silicon dmg（Windows 版暂停；参考 SlotSun/dart_simple_live 的 publish_app_release）
 # - 推送 v* 标签：构建并发布到对应的 GitHub Release。标题、更新说明、是否预发行都读 app_version.json，
 #   发版前先改好它并提交；标签和文件里的版本号不一致会直接失败
 # - 手动运行：构建指定 ref，产物上传到 Actions；ref 是标签且勾选 upload_release 时也发布
@@ -58,51 +58,6 @@ jobs:
             echo "is_tag=false" >> "$GITHUB_OUTPUT"
           fi
 
-  build-windows:
-    needs: version
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.REF }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: 下载 libmpv 开发包
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # shinchiro/mpv-winbuild-cmake 的 x86_64 开发包（不要 v3/AVX2 变体，兼容老 CPU）。
-          # 固定版本并校验（同原项目 media_kit_libs_windows_video），每次发版用同一个 libmpv；升级时改这三个值
-          $release = "20261021"
-          $asset = "mpv-dev-x86_64-$release-git-e471496c56.7z"
-          $sha256 = "efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633"
-          gh release download $release --repo shinchiro/mpv-winbuild-cmake --pattern $asset --output mpv-dev.7z
-          if ((Get-FileHash mpv-dev.7z -Algorithm SHA256).Hash -ne $sha256) { throw "$asset 的 SHA-256 不符" }
-          7z x mpv-dev.7z -ompv | Out-Null
-          # MSVC 链接器可以直接使用 MinGW 的导入库，改名成 #[link(name = "mpv")] 要找的 mpv.lib
-          Copy-Item mpv/libmpv.dll.a mpv/mpv.lib
-          "MPV_LIB_DIR=$pwd\mpv" >> $env:GITHUB_ENV
-
-      - name: 构建
-        run: cargo build --release -p livo
-
-      - name: 打包 portable
-        shell: pwsh
-        run: |
-          $name = "Livo-Windows-x64-v${{ needs.version.outputs.version }}-portable"
-          New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
-          Copy-Item target/release/livo.exe "dist/$name/Livo.exe"
-          Copy-Item mpv/libmpv-2.dll "dist/$name/"
-          Copy-Item LICENSE "dist/$name/"
-          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows
-          path: dist/*.zip
-
   build-macos:
     needs: version
     runs-on: macos-15 # Apple silicon
@@ -123,7 +78,7 @@ jobs:
           path: dist/*.dmg
 
   release:
-    needs: [version, build-windows, build-macos]
+    needs: [version, build-macos]
     if: needs.version.outputs.is_tag == 'true' && (github.event_name == 'push' || inputs.upload_release)
     runs-on: ubuntu-latest
     permissions:
@@ -153,7 +108,7 @@ jobs:
         run: |
           test -n "$KEY" || { echo "缺少仓库 secret LIVO_UPDATE_KEY（Ed25519 私钥 PEM）"; exit 1; }
           printf '%s\n' "$KEY" > key.pem
-          for f in artifacts/*/*.dmg artifacts/*/*.zip; do openssl pkeyutl -sign -inkey key.pem -rawin -in "$f" -out "$f.sig"; done
+          for f in artifacts/*/*.dmg; do openssl pkeyutl -sign -inkey key.pem -rawin -in "$f" -out "$f.sig"; done
           rm key.pem
       - uses: softprops/action-gh-release@v3
         with:

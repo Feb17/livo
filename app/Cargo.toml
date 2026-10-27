@@ -18,3 +18,5 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 [target.'cfg(target_os = "macos")'.dependencies]
 core-video = "0.4.3"
 core-foundation = "0.10"
+# GPUI 已依赖，用来把中文标题的窗口/帮助菜单交给 AppKit（menus.rs）
+objc = "0.2"

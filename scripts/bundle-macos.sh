@@ -37,6 +37,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key><string>Livo</string>
+  <!-- 界面只有中文：系统提供的菜单项（服务、窗口列表等）和面板也用中文 -->
+  <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
+  <key>CFBundleLocalizations</key><array><string>zh-Hans</string></array>
+  <key>LSApplicationCategoryType</key><string>public.app-category.entertainment</string>
   <key>CFBundleDisplayName</key><string>Livo</string>
   <key>CFBundleIdentifier</key><string>io.github.feb17.livo</string>
   <key>CFBundleExecutable</key><string>livo</string>
@@ -46,6 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key><string>Copyright © Feb17. GPL-3.0</string>
 </dict>
 </plist>
 PLIST
