@@ -98,9 +98,11 @@ jobs:
             jq -r .version_desc app_version.json > notes.md
             echo "notes=notes.md" >> "$GITHUB_OUTPUT"
           fi
+      # 合并到同一层：只有一个产物时 download-artifact 不建子目录，路径会随产物个数变
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
+          merge-multiple: true
       - name: 签名安装包
         # App 自动更新时用内置公钥校验 .sig，没有签名的包不会被自动安装
         env:
@@ -108,7 +110,7 @@ jobs:
         run: |
           test -n "$KEY" || { echo "缺少仓库 secret LIVO_UPDATE_KEY（Ed25519 私钥 PEM）"; exit 1; }
           printf '%s\n' "$KEY" > key.pem
-          for f in artifacts/*/*.dmg; do openssl pkeyutl -sign -inkey key.pem -rawin -in "$f" -out "$f.sig"; done
+          for f in artifacts/*.dmg; do openssl pkeyutl -sign -inkey key.pem -rawin -in "$f" -out "$f.sig"; done
           rm key.pem
       - uses: softprops/action-gh-release@v3
         with:
@@ -116,4 +118,4 @@ jobs:
           name: ${{ needs.version.outputs.version }}
           body_path: ${{ steps.meta.outputs.notes }}
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          files: artifacts/**/*
+          files: artifacts/*
