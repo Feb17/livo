@@ -334,7 +334,7 @@ impl Livo {
             self.row("硬件解码", Some("关闭后改用软件解码，下次播放生效"), self.switch("hwdec", lv.hwdec, |t, v| t.store.live.hwdec = v, cx)),
             self.row(
                 "缓冲区大小",
-                Some("若播放卡顿可尝试调高，下次播放生效"),
+                Some("若播放卡顿可尝试调高；同时决定暂停/往回拖时能回看多久，约每 16MB 回看半分钟（视清晰度），下次播放生效"),
                 self.choices("buffer", &["16MB", "32MB", "64MB", "128MB"], buffers.iter().position(|b| *b == lv.buffer_mb).unwrap_or(0), |t, i| t.store.live.buffer_mb = [16, 32, 64, 128][i], cx),
             ),
             self.row(
@@ -347,10 +347,15 @@ impl Livo {
         ];
 
         // 弹幕设置
-        let danmaku = vec![
+        let mut danmaku = vec![
             self.row("默认开启弹幕", Some("进入直播间时是否显示滚动弹幕"), self.switch("dm-enabled", st.danmaku.enabled, |t, v| t.store.danmaku.enabled = v, cx)),
-            div().px_1().py_2().border_b_1().border_color(rgb(border())).child(self.render_danmaku_settings(cx)).into_any_element(),
         ];
+        // 滑块行和其他设置行同一版式：标题在左，数值和滑块靠右
+        for (label, value, slider) in self.danmaku_sliders(cx) {
+            let hint = (label == "滚动速度").then_some("滚动速度为弹幕横穿画面的秒数，越小越快");
+            let control = div().flex().items_center().gap_3().child(div().w(px(56.)).text_sm().text_right().text_color(rgb(muted())).child(value)).child(slider);
+            danmaku.push(self.row(label, hint, control));
+        }
 
         // 播放页设置：快捷键
         let mut keys: Vec<AnyElement> = KEY_ACTIONS
@@ -429,6 +434,69 @@ impl Livo {
             .child(self.section("播放页设置", keys))
             .child(self.section("关注设置", follow))
             .child(self.section("定时关闭", auto_exit))
+    }
+
+    pub(crate) fn render_about(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::about::{can_install, Update, REPO, VERSION};
+        let accent = self.accent();
+        let (status, color) = match &self.update {
+            Update::Idle => (String::new(), muted()),
+            Update::Checking => ("正在检查…".to_string(), muted()),
+            Update::Latest => ("已是最新版本".to_string(), muted()),
+            Update::Available { version, .. } => (format!("发现新版本 {version}"), accent),
+            Update::Downloading { got, total, .. } if *total > 0 => (format!("正在下载 {}%", got * 100 / total), accent),
+            Update::Downloading { got, .. } => (format!("正在下载 {:.1}MB", *got as f64 / 1048576.), accent),
+            Update::Ready { version, .. } => (format!("{version} 已就绪，退出时自动安装"), accent),
+            Update::Failed(e) => (e.clone(), muted()),
+        };
+        let mut update = vec![self.row(
+            "检查更新",
+            None,
+            div().flex().items_center().gap_3().child(div().text_sm().text_color(rgb(color)).child(status)).child(self.small_btn("check-update", "检查").on_click(cx.listener(|this, _, _, cx| this.check_update(false, cx)))),
+        )];
+        if let Update::Available { version, desc } | Update::Downloading { version, desc, .. } | Update::Ready { version, desc } = &self.update {
+            let url = format!("{REPO}/releases/tag/v{version}");
+            // 能自动装就下载/重启，开发构建和没出包的平台只能去网页下载
+            let action = match &self.update {
+                Update::Available { .. } if can_install(version) => Some(self.small_btn("download-update", "下载并安装").on_click(cx.listener(|this, _, _, cx| this.download_update(cx)))),
+                Update::Available { .. } => Some(self.small_btn("open-release", "前往下载").on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url)))),
+                Update::Ready { .. } => Some(self.small_btn("install-update", "立即重启更新").on_click(cx.listener(|this, _, _, cx| this.install_update(true, cx)))),
+                _ => None,
+            };
+            update.push(
+                div()
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_3()
+                    .border_b_1()
+                    .border_color(rgb(border()))
+                    .child(div().text_xs().text_color(rgb(muted())).child(desc.clone()))
+                    .children(action)
+                    .into_any_element(),
+            );
+        }
+        update.push(self.row("自动更新", Some("启动时和每 6 小时检查新版本，后台下载并校验签名，退出时自动安装"), self.switch("auto-update", self.store.auto_update, |t, v| t.store.auto_update = v, cx)));
+        update.push(self.row("接收测试版", Some("也更新到预发行版本"), self.switch("update-beta", self.store.update_beta, |t, v| t.store.update_beta = v, cx)));
+        div()
+            .max_w(px(760.))
+            .flex()
+            .flex_col()
+            .gap_6()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .child(img(gpui::ImageSource::Resource(gpui::Resource::Embedded("logo.svg".into()))).size(px(112.)).flex_none())
+                    .child(div().flex().flex_col().gap_0p5().child(div().text_2xl().font_weight(FontWeight::BOLD).child("LIVO")).child(div().text_sm().text_color(rgb(muted())).child(format!("版本 {VERSION}")))),
+            )
+            .child(self.section("更新", update))
+            .child(self.section(
+                "项目",
+                vec![self.row("GitHub", Some(REPO), self.small_btn("open-repo", "打开").on_click(cx.listener(|_, _, _, cx| cx.open_url(REPO))))],
+            ))
     }
 
     pub(crate) fn render_history(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {

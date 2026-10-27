@@ -42,7 +42,7 @@ pub struct LiveSettings {
     /// 记住上次：平台 id -> 清晰度名称
     pub quality_memory: BTreeMap<String, String>,
     pub hwdec: bool,
-    /// 网络缓冲（MiB）
+    /// 网络缓冲（MiB），时移可回看的时长也由它决定
     pub buffer_mb: u32,
     /// 画面尺寸：0 适应，1 填充，2 拉伸
     pub fit: u8,
@@ -96,7 +96,7 @@ pub struct BiliAccount {
 }
 
 /// 播放页快捷键可配置的动作及默认按键（按键名用 GPUI 的 keystroke.key）
-pub const KEY_ACTIONS: [(&str, &str, &str); 9] = [
+pub const KEY_ACTIONS: [(&str, &str, &str); 11] = [
     ("fullscreen", "切换全屏", "f"),
     ("danmaku", "显示/隐藏弹幕", "d"),
     ("mute", "静音/取消静音", "m"),
@@ -105,6 +105,8 @@ pub const KEY_ACTIONS: [(&str, &str, &str); 9] = [
     ("volume_up", "调高音量", "up"),
     ("volume_down", "调低音量", "down"),
     ("pause", "暂停/继续", "space"),
+    ("seek_back", "后退 10 秒（时移）", "left"),
+    ("seek_forward", "前进 10 秒（时移）", "right"),
     ("stats", "显示/隐藏调试信息", "i"),
 ];
 
@@ -156,6 +158,10 @@ pub struct Store {
     /// 动作 -> 按键
     pub keys: BTreeMap<String, String>,
     pub bili: BiliAccount,
+    /// 启动时及每 6 小时检查新版本，后台下载、退出时安装
+    pub auto_update: bool,
+    /// 也接收预发行版本（目前发布的都是预发行）
+    pub update_beta: bool,
 }
 
 impl Default for Store {
@@ -172,6 +178,8 @@ impl Default for Store {
             auto_exit: AutoExit::default(),
             keys: default_keys(),
             bili: BiliAccount::default(),
+            auto_update: true,
+            update_beta: true,
         }
     }
 }

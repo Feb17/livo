@@ -1,6 +1,7 @@
 // Windows 发行版不弹控制台窗口
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod about;
 mod icons;
 mod img_http;
 mod mpv;
@@ -81,6 +82,9 @@ fn is_stalled(idle: bool, since: Instant, last_frame: Option<Instant>, now: Inst
     }
 }
 
+/// 时移：落后直播不到这么多秒就当作在直播（直播流自带 3-6 秒延迟）
+const LIVE_EDGE: f64 = 10.;
+
 fn rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     // 只跑网络请求和弹幕连接，两个线程足够；默认每个核一个线程
@@ -113,6 +117,7 @@ enum Tab {
     Follow,
     History,
     Settings,
+    About,
 }
 
 impl Tab {
@@ -351,8 +356,13 @@ struct Livo {
     show_danmaku: bool,
     volume: u8,
     muted: bool,
-    /// 各滑块的位置，绘制时回填，用来把鼠标坐标换算成数值：0 音量，1-4 弹幕设置
-    sliders: [Rc<Cell<gpui::Bounds<Pixels>>>; 5],
+    /// 各滑块的位置，绘制时回填，用来把鼠标坐标换算成数值：0 音量，1-4 弹幕设置，5 时移
+    sliders: [Rc<Cell<gpui::Bounds<Pixels>>>; 6],
+    /// 全屏时控制栏滑块的放大倍数（随窗口宽度），窗口模式为 1
+    ui_scale: f32,
+    update: about::Update,
+    /// 播放器的时移范围（见 Player::timeshift），每秒读一次给控制栏用
+    timeshift: Option<(f64, f64, f64)>,
     store: Store,
     follow_list: Vec<FollowEntry>,
     /// 搜索框里输入法正在组字的部分（字节范围）
@@ -426,6 +436,9 @@ impl Livo {
             volume: 100,
             muted: false,
             sliders: Default::default(),
+            ui_scale: 1.,
+            update: Default::default(),
+            timeshift: None,
             store,
             follow_list: vec![],
             images: RetainAllImageCache::new(cx),
@@ -451,6 +464,28 @@ impl Livo {
         let first = s.store.home_sort.iter().find_map(|id| Tab::from_id(id)).unwrap_or(Tab::Recommend);
         s.site_tab = s.store.home_sort.iter().filter_map(|id| Tab::from_id(id)).find(|t| t.is_site_page()).unwrap_or(Tab::Recommend);
         s.go(first, cx);
+        if s.store.auto_update {
+            s.check_update(true, cx);
+        }
+        // 开着不关的也能收到更新
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(6 * 3600)).await;
+            let alive = this.update(cx, |this, cx| {
+                if this.store.auto_update {
+                    this.check_update(true, cx);
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
+        // 已下载好的新版本在退出时安装
+        cx.on_app_quit(|this, cx| {
+            this.install_update(false, cx);
+            async {}
+        })
+        .detach();
         // 关注设置：后台按间隔刷新开播状态，每分钟检查一次是否到点
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_secs(60)).await;
@@ -472,6 +507,20 @@ impl Livo {
             }
         })
         .detach();
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            let alive = this.update(cx, |this, cx| {
+                let ts = this.player().and_then(|p| p.timeshift());
+                if ts != this.timeshift {
+                    this.timeshift = ts;
+                    cx.notify();
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
         s
     }
 
@@ -482,7 +531,11 @@ impl Livo {
         if self.loading {
             return;
         }
-        let Some(player) = self.room.as_ref().and_then(|r| r.player.as_ref()) else { return };
+        let Some(player) = self.player() else { return };
+        // 暂停时本来就没有新画面，不算断流
+        if player.paused() {
+            return;
+        }
         let v = self.video.read(cx);
         let (Some(since), last) = (v.playing_since, v.last_frame) else { return };
         if !is_stalled(player.idle(), since, last, Instant::now()) {
@@ -557,7 +610,7 @@ impl Livo {
                 kw => self.load_rooms(Source::Search(kw.to_string()), cx),
             },
             Tab::Follow => self.load_follows(cx),
-            Tab::History | Tab::Settings => {}
+            Tab::History | Tab::Settings | Tab::About => {}
         }
         cx.notify();
     }
@@ -883,6 +936,52 @@ impl Livo {
         .detach();
     }
 
+    fn player(&self) -> Option<&mpv::Player> {
+        self.room.as_ref().and_then(|r| r.player.as_ref())
+    }
+
+    /// 暂停/继续：播放中只暂停 mpv，缓存照常下载，继续播放就是时移；没在播放时开始播放
+    fn toggle_pause(&mut self, cx: &mut Context<Self>) {
+        let Some(p) = self.player() else { return self.play(cx) };
+        let pause = !p.paused();
+        p.set_pause(pause);
+        if !pause {
+            // 暂停期间没有新画面，重新计时，免得看门狗立刻判成断流
+            self.video.update(cx, |v, _| v.last_frame = Some(Instant::now()));
+        }
+        cx.notify();
+    }
+
+    /// 时移跳转到 `t` 秒，限制在已缓存的范围内；末尾留 1 秒，免得跳到缓存外面卡住
+    fn seek_abs(&mut self, t: f64, cx: &mut Context<Self>) {
+        let Some(p) = self.player() else { return };
+        let Some((start, end, _)) = p.timeshift() else { return };
+        p.seek_to(t.clamp(start, (end - 1.).max(start)));
+        self.timeshift = p.timeshift();
+        cx.notify();
+    }
+
+    /// 时移滑块：按比例跳到缓存范围里的位置
+    fn seek_frac(&mut self, f: f32, cx: &mut Context<Self>) {
+        if let Some((start, end, _)) = self.timeshift {
+            self.seek_abs(start + (end - start) * f as f64, cx)
+        }
+    }
+
+    fn seek_by(&mut self, secs: f64, cx: &mut Context<Self>) {
+        if let Some((_, _, pos)) = self.player().and_then(|p| p.timeshift()) {
+            self.seek_abs(pos + secs, cx)
+        }
+    }
+
+    /// 回到直播：跳到缓存最新处并继续播放
+    fn go_live(&mut self, cx: &mut Context<Self>) {
+        self.seek_abs(f64::MAX, cx);
+        if self.player().is_some_and(|p| p.paused()) {
+            self.toggle_pause(cx)
+        }
+    }
+
     fn toggle_danmaku(&mut self, cx: &mut Context<Self>) {
         self.show_danmaku = !self.show_danmaku;
         let on = self.show_danmaku;
@@ -1046,7 +1145,9 @@ impl Livo {
             }
             "volume_up" => self.set_volume(self.volume.saturating_add(5), false, cx),
             "volume_down" => self.set_volume(self.volume.saturating_sub(5), false, cx),
-            "pause" => self.play(cx),
+            "pause" => self.toggle_pause(cx),
+            "seek_back" => self.seek_by(-10., cx),
+            "seek_forward" => self.seek_by(10., cx),
             _ => {}
         }
     }
@@ -1270,6 +1371,7 @@ impl Render for Livo {
         let content_w = f32::from(window.viewport_size().width) - SIDEBAR_W;
         // 直播间里全屏时只留视频
         let full = self.room.is_some() && window.is_fullscreen();
+        self.ui_scale = if full { (f32::from(window.viewport_size().width) / 900.).max(1.) } else { 1. };
         let main = match &self.room {
             Some(room) => self.render_room(room, full, cx),
             None => self.render_browse(content_w, cx).into_any_element(),
@@ -1337,8 +1439,9 @@ impl Livo {
         let tabs = self.store.home_sort.iter().filter_map(|id| Some((Tab::from_id(id)?, HOME_PAGES.iter().find(|(p, _)| p == id)?.1))).map(|(t, name)| {
             nav_item(name, name, self.tab == t && !in_room, accent).on_click(cx.listener(move |this, _, _, cx| this.go(t, cx)))
         });
-        let mine = [(Tab::History, "观看记录"), (Tab::Settings, "设置")].map(|(t, name)| {
-            nav_item(name, name, self.tab == t && !in_room, accent).on_click(cx.listener(move |this, _, _, cx| this.go(t, cx)))
+        let mine = [(Tab::History, "观看记录"), (Tab::Settings, "设置"), (Tab::About, "关于")].map(|(t, name)| {
+            let label = if t == Tab::About && matches!(self.update, about::Update::Available { .. } | about::Update::Ready { .. }) { "关于 · 有新版本" } else { name };
+            nav_item(name, label, self.tab == t && !in_room, accent).on_click(cx.listener(move |this, _, _, cx| this.go(t, cx)))
         });
         div()
             .w(px(SIDEBAR_W))
@@ -1359,20 +1462,8 @@ impl Livo {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .size(px(26.))
-                            .rounded_lg()
-                            .bg(linear_gradient(135., linear_color_stop(rgb(accent), 0.), linear_color_stop(rgb(0x7c5cff), 1.)))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_sm()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xffffff))
-                            .child("S"),
-                    )
-                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).child("Livo")),
+                    .child(img(gpui::ImageSource::Resource(gpui::Resource::Embedded("logo.svg".into()))).size(px(40.)).flex_none())
+                    .child(div().text_lg().font_weight(FontWeight::BOLD).child("LIVO")),
             )
             .child(section_label("平台"))
             .child(div().flex().flex_col().gap_0p5().children(sites))
@@ -1459,6 +1550,7 @@ impl Livo {
             (Tab::Search, _) => (format!("“{}”", self.keyword), format!("{site} · 搜索结果")),
             (Tab::History, _) => ("观看记录".to_string(), format!("最近看过的 {} 个直播间", self.store.history.len())),
             (Tab::Settings, _) => ("设置".to_string(), "外观、播放、弹幕、关注与账号".to_string()),
+            (Tab::About, _) => ("关于".to_string(), "版本与更新".to_string()),
             (Tab::Follow, _) => {
                 let live = self.follow_list.iter().filter(|e| e.live == Some(true)).count();
                 ("我的关注".to_string(), format!("{} 个主播 · {live} 个正在直播", self.follow_list.len()))
@@ -1469,6 +1561,7 @@ impl Livo {
             Tab::Follow => self.render_follows(content_w - 2. * PAD, cx).into_any_element(),
             Tab::History => self.render_history(content_w - 2. * PAD, cx).into_any_element(),
             Tab::Settings => self.render_settings(cx).into_any_element(),
+            Tab::About => self.render_about(cx).into_any_element(),
             Tab::Search => self.render_search(content_w - 2. * PAD, cx).into_any_element(),
             _ => self.render_grid(content_w - 2. * PAD, cx).into_any_element(),
         };
@@ -1673,20 +1766,26 @@ impl Livo {
             }))
     }
 
-    /// 弹幕设置面板：字号、不透明度、滚动速度、显示区域（范围同原项目，字号收窄到 12-60）
-    fn render_danmaku_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// 弹幕设置的四个滑块：(标题, 当前值, 滑块)。字号、不透明度、滚动速度、显示区域（范围同原项目，字号收窄到 12-60）
+    /// 回调要是不捕获变量的 fn，直接在闭包里按比例换算并取整
+    pub(crate) fn danmaku_sliders(&self, cx: &mut Context<Self>) -> Vec<(&'static str, String, gpui::AnyElement)> {
         let st = self.store.danmaku;
-        let row = |label: &'static str, value: String, slider: gpui::AnyElement| {
-            div().flex().flex_col().gap_1().px_3().py_2().child(div().flex().justify_between().text_sm().child(label).child(div().text_color(rgb(muted())).child(value))).child(slider)
-        };
-        // 回调要是不捕获变量的 fn，直接在闭包里按比例换算并取整
+        vec![
+            ("字体大小", format!("{}", st.font), self.slider(1, (st.font - 12.) / 48., 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { font: (12. + f * 48.).round(), ..t.store.danmaku }, cx), cx).into_any_element()),
+            ("不透明度", format!("{}%", (st.opacity * 100.).round()), self.slider(2, (st.opacity - 0.1) / 0.9, 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { opacity: ((0.1 + f * 0.9) * 20.).round() / 20., ..t.store.danmaku }, cx), cx).into_any_element()),
+            ("滚动速度", format!("{} 秒", st.secs), self.slider(3, (st.secs - 1.) / 29., 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { secs: (1. + f * 29.).round(), ..t.store.danmaku }, cx), cx).into_any_element()),
+            ("显示区域", format!("{}%", (st.area * 100.).round()), self.slider(4, (st.area - 0.1) / 0.9, 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { area: ((0.1 + f * 0.9) * 20.).round() / 20., ..t.store.danmaku }, cx), cx).into_any_element()),
+        ]
+    }
+
+    /// 播放页右侧的弹幕设置面板（窄，竖排）
+    fn render_danmaku_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .child(row("字体大小", format!("{}", st.font), self.slider(1, (st.font - 12.) / 48., 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { font: (12. + f * 48.).round(), ..t.store.danmaku }, cx), cx).into_any_element()))
-            .child(row("不透明度", format!("{}%", (st.opacity * 100.).round()), self.slider(2, (st.opacity - 0.1) / 0.9, 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { opacity: ((0.1 + f * 0.9) * 20.).round() / 20., ..t.store.danmaku }, cx), cx).into_any_element()))
-            .child(row("滚动速度", format!("{} 秒", st.secs), self.slider(3, (st.secs - 1.) / 29., 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { secs: (1. + f * 29.).round(), ..t.store.danmaku }, cx), cx).into_any_element()))
-            .child(row("显示区域", format!("{}%", (st.area * 100.).round()), self.slider(4, (st.area - 0.1) / 0.9, 192., |t, f, cx| t.set_danmaku_style(DanmakuStyle { area: ((0.1 + f * 0.9) * 20.).round() / 20., ..t.store.danmaku }, cx), cx).into_any_element()))
+            .children(self.danmaku_sliders(cx).into_iter().map(|(label, value, slider)| {
+                div().flex().flex_col().gap_1().px_3().py_2().child(div().flex().justify_between().text_sm().child(label).child(div().text_color(rgb(muted())).child(value))).child(slider)
+            }))
             .child(div().px_3().pt_1().text_xs().text_color(rgb(subtle())).child("滚动速度为弹幕横穿画面的秒数，越小越快"))
             .into_any_element()
     }
@@ -1741,7 +1840,7 @@ impl Livo {
     /// 底部控制栏，布局照原项目：左侧 刷新/播放/弹幕，右侧 音量/清晰度/线路/全屏
     fn render_controls(&self, room: &Room, full: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let accent = self.accent();
-        let playing = room.player.is_some();
+        let playing = room.player.as_ref().is_some_and(|p| !p.paused());
         let white = rgb(0xffffff);
         let icon_btn = |id: &'static str, name: &'static str| {
             div().id(id).size(px(36.)).flex_none().rounded_full().flex().items_center().justify_center().cursor_pointer().hover(|s| s.bg(tint(0xffffff, 0x26))).child(icon(name, 22., white))
@@ -1751,7 +1850,7 @@ impl Livo {
             if open { b.bg(tint(accent, 0x55)) } else { b }.child(label)
         };
         let level = if self.muted { 0. } else { self.volume as f32 / 100. };
-        let volume_slider = self.slider(0, level, 88., |t, f, cx| t.set_volume((f * 100.).round() as u8, false, cx), cx);
+        let volume_slider = self.slider(0, level, 88. * self.ui_scale, |t, f, cx| t.set_volume((f * 100.).round() as u8, false, cx), cx);
         let quality = room.qualities.get(room.quality_idx).map_or("清晰度".to_string(), |q| q.name.clone());
         div()
             .absolute()
@@ -1774,13 +1873,34 @@ impl Livo {
                 let idx = this.room.as_ref().map_or(0, |r| r.quality_idx);
                 this.choose_quality(idx, cx)
             })))
-            .child(icon_btn("play", if playing { "pause" } else { "play" }).on_click(cx.listener(|this, _, _, cx| this.play(cx))))
+            .child(icon_btn("play", if playing { "pause" } else { "play" }).on_click(cx.listener(|this, _, _, cx| this.toggle_pause(cx))))
             .child(icon_btn("danmaku", if self.show_danmaku { "danmaku_on" } else { "danmaku_off" }).on_click(cx.listener(|this, _, _, cx| this.toggle_danmaku(cx))))
             .child(icon_btn("danmaku-settings", "tune").on_click(cx.listener(|this, _, _, cx| {
                 this.menu = if this.menu == Some(Menu::Danmaku) { None } else { Some(Menu::Danmaku) };
                 cx.notify()
             })))
             .child(icon_btn("stats", "info").on_click(cx.listener(|this, _, _, cx| this.toggle_stats(cx))))
+            // 时移：拖动在已缓存的范围里回看；落后直播 5 秒以上显示落后多少，点一下回到直播
+            .children(self.timeshift.filter(|(s, e, _)| e - s > 1.).map(|(start, end, pos)| {
+                // 直播本身就有几秒延迟，落后不到 LIVE_EDGE 都算直播：滑块钉在最右边，往回拖之后才离开
+                let live = end - pos < LIVE_EDGE;
+                let (behind, frac) = (end - pos, if live { 1. } else { ((pos - start) / (end - start)) as f32 });
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .ml_2()
+                    .child(self.slider(5, frac, 160. * self.ui_scale, |t, f, cx| t.seek_frac(f, cx), cx))
+                    .child(
+                        div()
+                            .id("go-live")
+                            .text_xs()
+                            .cursor_pointer()
+                            .text_color(if live { rgb(accent) } else { white })
+                            .child(if live { "直播".to_string() } else { format!("-{behind:.0} 秒") })
+                            .on_click(cx.listener(|this, _, _, cx| this.go_live(cx))),
+                    )
+            }))
             .child(div().flex_1())
             .child(icon_btn("mute", if self.muted || self.volume == 0 { "volume_off" } else { "volume" }).on_click(cx.listener(|this, _, _, cx| {
                 let v = if this.volume == 0 { 50 } else { this.volume };

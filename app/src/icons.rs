@@ -21,6 +21,9 @@ pub struct Icons;
 
 impl AssetSource for Icons {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path == "logo.svg" {
+            return Ok(Some(Cow::Borrowed(include_bytes!("../assets/logo.svg"))));
+        }
         Ok(ICONS
             .iter()
             .find(|(name, _)| *name == path)

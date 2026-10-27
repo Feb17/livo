@@ -146,6 +146,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: 签名安装包
+        # App 自动更新时用内置公钥校验 .sig，没有签名的包不会被自动安装
+        env:
+          KEY: ${{ secrets.LIVO_UPDATE_KEY }}
+        run: |
+          test -n "$KEY" || { echo "缺少仓库 secret LIVO_UPDATE_KEY（Ed25519 私钥 PEM）"; exit 1; }
+          printf '%s\n' "$KEY" > key.pem
+          for f in artifacts/*/*.dmg artifacts/*/*.zip; do openssl pkeyutl -sign -inkey key.pem -rawin -in "$f" -out "$f.sig"; done
+          rm key.pem
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}

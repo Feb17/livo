@@ -3059,6 +3059,7 @@ dependencies = [
  "livo_core",
  "qrcode",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "tokio",

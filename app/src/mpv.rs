@@ -104,12 +104,13 @@ fn make_backend(mpv: &Handle) -> anyhow::Result<Box<dyn Backend>> {
 impl Player {
     /// 按线路顺序播放 `urls`（打不开或断流时 mpv 自动切到下一条），
     /// 帧从返回的接收端送出（满了就丢帧，只保留最新画面）。
-    /// `hw`：是否硬件解码；`buffer_mb`：网络缓冲上限（直播设置里可调）
+    /// `hw`：是否硬件解码；`buffer_mb`：网络缓冲上限，往回保留的缓存同样大，决定能回看多久（直播设置里可调）
     pub fn new(urls: &[String], headers: &[(String, String)], hw: bool, buffer_mb: u32) -> anyhow::Result<(Player, tokio::sync::mpsc::Receiver<Frame>)> {
         let h = unsafe { mpv_create() };
         anyhow::ensure!(!h.is_null(), "libmpv 创建失败");
         let header = |k: &str| headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(k)).map_or("", |(_, v)| v.as_str());
-        let (buf, back) = (format!("{}MiB", buffer_mb.max(1)), format!("{}MiB", (buffer_mb / 2).max(1)));
+        // 时移：往回保留的数据和前向缓冲一样大，可回看的时长随缓冲区大小变化
+        let (buf, back) = (format!("{}MiB", buffer_mb.max(1)), format!("{}MiB", buffer_mb.max(1)));
         let opts = [
             ("vo", "libmpv"),
             ("terminal", "no"),
@@ -125,6 +126,28 @@ impl Player {
             ("demuxer-readahead-secs", "2"),
             ("demuxer-max-bytes", &buf),
             ("demuxer-max-back-bytes", &back),
+            // 只当播放内核用：libmpv 默认还会起 6 个 Lua 脚本线程（统计/控制台/选择器…）、加载字幕和字体，这里都用不上。
+            // 实测去掉后 CPU 约降 1 个百分点、内存少 7MB 左右；精简版 libmpv 没编 Lua，这些选项不存在时下面会跳过
+            ("load-scripts", "no"),
+            ("load-stats-overlay", "no"),
+            ("load-console", "no"),
+            ("load-select", "no"),
+            ("load-positioning", "no"),
+            ("load-commands", "no"),
+            ("load-context-menu", "no"),
+            ("osc", "no"),
+            ("input-default-bindings", "no"),
+            ("input-vo-keyboard", "no"),
+            ("sid", "no"),
+            ("sub-auto", "no"),
+            ("embeddedfonts", "no"),
+            ("osd-level", "0"),
+            ("audio-display", "no"),
+            // 硬解时 4 个软解帧线程只会互相抢锁（实测每路约 2 个百分点 CPU）；软解才需要多线程，所以只在硬解时限制
+            ("vd-lavc-threads", if hw { "2" } else { "" }),
+            // 时移：直播流本身不能跳，只在已缓存的范围里跳（范围见 timeshift，界面会限制在这个范围内）
+            ("force-seekable", "yes"),
+            ("demuxer-seekable-cache", "yes"),
         ];
         let init = || -> anyhow::Result<()> {
             for (k, v) in opts.iter().filter(|(_, v)| !v.is_empty()) {
@@ -245,6 +268,32 @@ impl Player {
     }
 
     /// 音量 0-100；静音单独控制，取消静音后恢复原音量
+    /// 时移范围：(可回看的最早位置, 已缓存的最新位置, 当前位置)，同一条时间轴上的秒数；还没缓存时为 None
+    pub fn timeshift(&self) -> Option<(f64, f64, f64)> {
+        let pos = prop_f64(&self.mpv, "time-pos")?;
+        let state: serde_json::Value = serde_json::from_str(&prop_str(&self.mpv, "demuxer-cache-state")?).ok()?;
+        let r = state["seekable-ranges"].as_array()?.last()?;
+        Some((r["start"].as_f64()?, r["end"].as_f64()?, pos))
+    }
+
+    /// 跳到时间轴上的 `t` 秒；调用方负责限制在 timeshift 范围内
+    pub fn seek_to(&self, t: f64) {
+        let (cmd, t, mode) = (cstr("seek"), cstr(&format!("{t:.3}")), cstr("absolute"));
+        let mut args = [cmd.as_ptr(), t.as_ptr(), mode.as_ptr(), std::ptr::null()];
+        unsafe { mpv_command(self.mpv.0, args.as_mut_ptr()) };
+    }
+
+    /// 暂停时 mpv 继续往缓存里下载，继续播放就是时移
+    pub fn set_pause(&self, on: bool) {
+        unsafe { mpv_set_property_string(self.mpv.0, cstr("pause").as_ptr(), cstr(if on { "yes" } else { "no" }).as_ptr()) };
+    }
+
+    pub fn paused(&self) -> bool {
+        let mut v: c_int = 0;
+        unsafe { mpv_get_property(self.mpv.0, cstr("pause").as_ptr(), FORMAT_FLAG, &mut v as *mut c_int as *mut c_void) };
+        v != 0
+    }
+
     pub fn set_volume(&self, volume: u8, muted: bool) {
         unsafe {
             mpv_set_property_string(self.mpv.0, cstr("volume").as_ptr(), cstr(&volume.min(100).to_string()).as_ptr());
@@ -380,6 +429,18 @@ mod tests {
         }
     }
 
+    /// 设置里的缓冲区大小要同时决定前向缓冲和往回保留（可回看时长）的上限
+    #[test]
+    fn buffer_setting_reaches_mpv() {
+        let src = "av://lavfi:color=c=black:s=64x64:r=10";
+        for mb in [16, 64, 128] {
+            let (p, _rx) = Player::new(&[src.into()], &[], true, mb).unwrap();
+            let want = mb as i64 * 1024 * 1024;
+            assert_eq!(prop(&p.mpv, "demuxer-max-bytes"), want, "前向缓冲 {mb}MB");
+            assert_eq!(prop(&p.mpv, "demuxer-max-back-bytes"), want, "往回缓存 {mb}MB");
+        }
+    }
+
     #[test]
     fn fit_shrinks_to_view_keeping_aspect() {
         let view = |w: u64, h: u64| w << 32 | h;
@@ -405,6 +466,39 @@ mod tests {
             let (_p, mut rx) = Player::new(&pu.urls, &pu.headers, true, 16).unwrap();
             let f = rt.block_on(async { tokio::time::timeout(std::time::Duration::from_secs(15), rx.recv()).await });
             assert!(matches!(f, Ok(Some(_))), "{} 15 秒内没有画面", site.name());
+        }
+    }
+
+    /// 时移（需要网络）：播一会儿后能读到缓存范围、往回跳、暂停
+    #[test]
+    #[ignore]
+    fn seeks_back_in_live_cache() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let wait = |s: u64| std::thread::sleep(std::time::Duration::from_secs(s));
+        for site in livo_core::Site::all() {
+            let pu = rt
+                .block_on(async {
+                    let r = site.recommend_rooms(1).await?;
+                    let q = site.play_qualities(&r.items[0].room_id).await?;
+                    site.play_urls(&r.items[0].room_id, q[0].qn).await
+                })
+                .unwrap();
+            let (p, _rx) = Player::new(&pu.urls, &pu.headers, true, 16).unwrap();
+            wait(15);
+            let (start, end, pos) = p.timeshift().unwrap_or_else(|| panic!("{} 读不到缓存范围", site.name()));
+            assert!(pos - start > 8., "{} 可回看不足 8 秒：{start:.1}..{end:.1} @ {pos:.1}", site.name());
+            p.seek_to(pos - 6.);
+            wait(2);
+            let (_, _, after) = p.timeshift().unwrap();
+            assert!(after < pos - 2., "{} 往回跳没生效：{pos:.1} -> {after:.1}", site.name());
+            p.set_pause(true);
+            assert!(p.paused());
+            let (_, _, a) = p.timeshift().unwrap();
+            wait(2);
+            let (_, end2, b) = p.timeshift().unwrap();
+            assert!((b - a).abs() < 0.1, "{} 暂停后进度还在走：{a:.1} -> {b:.1}", site.name());
+            assert!(end2 > end, "{} 暂停时缓存没有继续增长", site.name());
+            eprintln!("{} 时移正常：回看 {:.1} 秒", site.name(), pos - start);
         }
     }
 }
