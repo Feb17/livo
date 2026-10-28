@@ -115,7 +115,7 @@ fn default_keys() -> BTreeMap<String, String> {
 }
 
 /// 主页（侧边栏）页面的默认顺序，第一个是启动页
-pub const HOME_PAGES: [(&str, &str); 3] = [("recommend", "热门推荐"), ("follow", "我的关注"), ("category", "全部分类")];
+pub const HOME_PAGES: [(&str, &str); 3] = [("recommend", "推荐"), ("follow", "我的关注"), ("category", "分区")];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Follow {

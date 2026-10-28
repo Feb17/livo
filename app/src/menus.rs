@@ -9,9 +9,9 @@ actions!(
     livo,
     [
         Quit, Hide, HideOthers, ShowAll, About, CheckUpdate, Settings, Help, ReportIssue,
-        EditCut, EditCopy, EditPaste,
+        EditCut, EditCopy, EditPaste, FocusSearch,
         ShowRecommend, ShowCategory, ShowFollow, ShowHistory, ToggleFullScreen,
-        TogglePause, ToggleMute, VolumeUp, VolumeDown, SeekBack, SeekForward, ToggleDanmaku, ToggleChat, ToggleStats, Refresh, ToggleFollow, CloseRoom,
+        TogglePause, ToggleMute, VolumeUp, VolumeDown, SeekBack, SeekForward, ToggleDanmaku, ToggleChat, ToggleStats, Refresh, ToggleFollow, CopyLink, CloseRoom,
         Minimize, Zoom, CloseWindow,
     ]
 );
@@ -32,6 +32,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-x", EditCut, None),
         KeyBinding::new("cmd-c", EditCopy, None),
         KeyBinding::new("cmd-v", EditPaste, None),
+        KeyBinding::new("cmd-f", FocusSearch, None),
         KeyBinding::new("cmd-1", ShowRecommend, None),
         KeyBinding::new("cmd-2", ShowCategory, None),
         KeyBinding::new("cmd-3", ShowFollow, None),
@@ -40,6 +41,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
         KeyBinding::new("cmd-r", Refresh, None),
         KeyBinding::new("cmd-d", ToggleFollow, None),
+        KeyBinding::new("shift-cmd-c", CopyLink, None),
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
     ]);
@@ -61,22 +63,26 @@ pub fn init(cx: &mut App) {
                 MenuItem::action("退出 Livo", Quit),
             ],
         },
-        // 唯一的文本框是搜索关键词，没有选区，剪切/拷贝针对整个关键词
+        // 唯一的文本框是搜索关键词，没有选区，剪切/拷贝针对整个关键词；⌘F 让工具栏的搜索框进入输入状态
         Menu {
             name: "编辑".into(),
             items: vec![
                 MenuItem::os_action("剪切", EditCut, OsAction::Cut),
                 MenuItem::os_action("拷贝", EditCopy, OsAction::Copy),
                 MenuItem::os_action("粘贴", EditPaste, OsAction::Paste),
+                MenuItem::separator(),
+                MenuItem::action("搜索", FocusSearch),
             ],
         },
         Menu {
             name: "显示".into(),
             items: vec![
-                MenuItem::action("热门推荐", ShowRecommend),
-                MenuItem::action("全部分类", ShowCategory),
+                MenuItem::action("推荐", ShowRecommend),
+                MenuItem::action("分区", ShowCategory),
                 MenuItem::action("我的关注", ShowFollow),
                 MenuItem::action("观看记录", ShowHistory),
+                MenuItem::separator(),
+                MenuItem::action("刷新", Refresh),
             ],
         },
         Menu {
@@ -94,8 +100,8 @@ pub fn init(cx: &mut App) {
                 MenuItem::action("收起/展开聊天区", ToggleChat),
                 MenuItem::action("显示/隐藏调试信息", ToggleStats),
                 MenuItem::separator(),
-                MenuItem::action("刷新直播间", Refresh),
                 MenuItem::action("关注/取消关注", ToggleFollow),
+                MenuItem::action("复制直播间链接", CopyLink),
                 MenuItem::action("离开直播间", CloseRoom),
             ],
         },

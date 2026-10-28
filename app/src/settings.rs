@@ -170,71 +170,70 @@ impl Livo {
 
     // ---------- 通用控件 ----------
 
+    /// 设置分组：11px 分组标题 + surface 卡片，行与行之间 1px 分隔
     fn section(&self, title: &'static str, rows: Vec<AnyElement>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap_2()
-            .child(div().px_1().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(rgb(muted())).child(title))
-            .child(div().flex().flex_col().rounded_xl().bg(rgb(surface())).border_1().border_color(rgb(border())).children(rows))
+            .gap(px(SPACE_2))
+            .child(group_label(title))
+            .child(div().flex().flex_col().rounded(px(RADIUS_MD)).bg(surface()).border_1().border_color(border()).children(rows.into_iter().enumerate().map(|(i, r)| div().flex().flex_col().when(i > 0, |d| d.border_t_1().border_color(border())).child(r))))
     }
 
+    /// 设置行：左侧名称 + 一行说明，右侧控件
     fn row(&self, title: &'static str, subtitle: Option<&'static str>, control: impl IntoElement) -> AnyElement {
         div()
-            .min_h(px(56.))
-            .px_4()
-            .py_2()
+            .min_h(px(44.))
+            .px(px(SPACE_4))
+            .py(px(10.))
             .flex()
             .items_center()
             .justify_between()
-            .gap_4()
-            .border_b_1()
-            .border_color(rgb(border()))
-            .child(div().flex().flex_col().gap_0p5().min_w(px(0.)).child(div().text_sm().child(title)).children(subtitle.map(|s| div().text_xs().text_color(rgb(muted())).child(s))))
+            .gap(px(SPACE_4))
+            .child(div().flex().flex_col().min_w(px(0.)).child(div().t_body().child(title)).children(subtitle.map(|s| div().t_callout().text_color(muted()).child(s))))
             .child(control)
             .into_any_element()
     }
 
-    /// 开关（macOS 风格）：点击后拖柄滑过去、轨道颜色渐变
+    /// 开关：38 × 22，关闭态轨道 border-strong，打开态 accent-fill；点击后滑块 150ms 滑过去
     fn switch(&self, id: &'static str, on: bool, set: fn(&mut Self, bool), cx: &mut Context<Self>) -> impl IntoElement {
-        let accent = self.accent();
-        // p：0 关、1 开，轨道颜色和拖柄位置都按它插值
+        let (off_c, on_c) = (border_strong(), accent_fill());
+        // p：0 关、1 开，轨道颜色和滑块位置都按它插值
         let track = move |p: f32| {
             div()
                 .size_full()
                 .relative()
                 .rounded_full()
-                .bg(rgb(hover()))
-                .child(div().absolute().inset_0().rounded_full().bg(rgb(accent)).opacity(p))
-                .child(div().absolute().top(px(2.)).left(px(2. + 18. * p)).size(px(18.)).rounded_full().bg(rgb(0xffffff)).shadow_sm())
+                .bg(mix(off_c, on_c, p))
+                .child(div().absolute().top(px(2.)).left(px(2. + 16. * p)).size(px(18.)).rounded_full().bg(rgb(0xffffff)).shadow(vec![BoxShadow { color: c(0x00000040).into(), offset: point(px(0.), px(1.)), blur_radius: px(2.), spread_radius: px(0.) }]))
         };
         let to = if on { 1. } else { 0. };
         let body = match self.anim_gen(id) {
-            Some(gen) => track(1. - to).with_animation((id, gen), Animation::new(Duration::from_millis(200)).with_easing(ease_in_out), move |_, t| track(1. - to + (2. * to - 1.) * t)).into_any_element(),
+            Some(gen) => track(1. - to).with_animation((id, gen), Animation::new(Duration::from_millis(150)).with_easing(ease_out_quint()), move |_, t| track(1. - to + (2. * to - 1.) * t)).into_any_element(),
             None => track(to).into_any_element(),
         };
-        div().id(id).w(px(40.)).h(px(22.)).flex_none().cursor_pointer().child(body).on_click(cx.listener(move |this, _, _, cx| {
+        div().id(id).w(px(38.)).h(px(22.)).flex_none().cursor_pointer().child(body).on_click(cx.listener(move |this, _, _, cx| {
             this.touch(id);
             set(this, !on);
             this.save_and_notify(cx)
         }))
     }
 
-    /// 分段控件（macOS 风格）：灰色轨道上浮起一块选中背景，刚点的那一下淡入
+    /// 分段控件：hover 色轨道上浮起一块 surface-raised 选中块，刚点的那一下淡入
     fn choices(&self, id: &'static str, options: &[&'static str], selected: usize, set: fn(&mut Self, usize), cx: &mut Context<Self>) -> impl IntoElement {
         let anim = self.anim_gen(id);
-        div().flex().flex_none().gap_0p5().p(px(2.)).rounded_lg().bg(rgb(hover())).children(options.iter().enumerate().map(|(i, label)| {
+        div().flex().flex_none().gap(px(2.)).p(px(2.)).rounded(px(RADIUS_SM)).bg(hover()).children(options.iter().enumerate().map(|(i, label)| {
             let on = i == selected;
-            let b = div().id(SharedString::from(format!("{id}-{i}"))).relative().px_3().py_1().rounded_md().text_xs().cursor_pointer();
+            let b = div().id(SharedString::from(format!("{id}-{i}"))).relative().h(px(24.)).px(px(SPACE_3)).flex().items_center().rounded(px(RADIUS_XS)).t_callout().cursor_pointer();
             let b = if on {
-                let thumb = div().absolute().inset_0().rounded_md().bg(rgb(raised())).shadow_sm();
+                let thumb = div().absolute().inset_0().rounded(px(RADIUS_XS)).bg(raised()).shadow(shadow_card());
                 let thumb = match anim {
                     Some(gen) => thumb.with_animation((id, gen), Animation::new(Duration::from_millis(180)).with_easing(ease_out_quint()), |d, t| d.opacity(t)).into_any_element(),
                     None => thumb.into_any_element(),
                 };
-                b.text_color(rgb(text())).font_weight(FontWeight::MEDIUM).child(thumb)
+                b.text_color(text()).font_weight(FontWeight::SEMIBOLD).child(thumb)
             } else {
-                b.text_color(rgb(muted())).hover(|s| s.text_color(rgb(text())))
+                b.text_color(muted()).hover(|s| s.text_color(text()))
             };
             // 文字要盖在浮起的背景上面
             b.child(div().relative().child(*label)).on_click(cx.listener(move |this, _, _, cx| {
@@ -245,30 +244,26 @@ impl Livo {
         }))
     }
 
-    fn small_btn(&self, id: impl Into<SharedString>, label: impl Into<SharedString>) -> gpui::Stateful<gpui::Div> {
-        div().id(id.into()).px_3().py_1().rounded_md().cursor_pointer().text_xs().bg(rgb(hover())).hover(|s| s.bg(rgb(border()))).child(label.into())
-    }
-
     fn sort_list(&self, id: &'static str, items: Vec<String>, first_note: Option<&'static str>, mv: fn(&mut Self, usize, bool, &mut Context<Self>), cx: &mut Context<Self>) -> impl IntoElement {
         let n = items.len();
-        div().flex().flex_col().gap_1().children(items.into_iter().enumerate().map(|(i, label)| {
+        div().flex().flex_col().gap(px(SPACE_1)).children(items.into_iter().enumerate().map(|(i, label)| {
             let arrow = |dir: &'static str, up: bool, enabled: bool| {
-                let b = div().id(SharedString::from(format!("{id}-{i}-{dir}"))).size(px(26.)).rounded_md().flex().items_center().justify_center().text_sm();
+                let b = div().id(SharedString::from(format!("{id}-{i}-{dir}"))).size(px(theme::CONTROL_SM)).rounded(px(RADIUS_SM)).flex().items_center().justify_center();
                 if enabled {
-                    b.cursor_pointer().bg(rgb(hover())).hover(|s| s.bg(rgb(border()))).on_click(cx.listener(move |this, _, _, cx| mv(this, i, up, cx)))
+                    b.cursor_pointer().text_color(muted()).hover(|s| s.bg(hover()).text_color(text())).on_click(cx.listener(move |this, _, _, cx| mv(this, i, up, cx)))
                 } else {
-                    b.text_color(rgb(subtle()))
+                    b.text_color(subtle()).opacity(0.6)
                 }
                 .child(dir)
             };
             div()
                 .flex()
                 .items_center()
-                .gap_2()
-                .w(px(260.))
-                .child(div().w(px(18.)).text_xs().text_color(rgb(subtle())).child(format!("{}", i + 1)))
-                .child(div().flex_1().text_sm().child(label))
-                .children((i == 0).then_some(first_note).flatten().map(|t| div().text_xs().text_color(rgb(muted())).child(t)))
+                .gap(px(SPACE_2))
+                .w(px(240.))
+                .child(div().w(px(16.)).t_callout().text_color(subtle()).child(format!("{}", i + 1)))
+                .child(div().flex_1().t_body().child(label))
+                .children((i == 0).then_some(first_note).flatten().map(|t| badge(Badge::Neutral, None, t)))
                 .child(arrow("↑", true, i > 0))
                 .child(arrow("↓", false, i + 1 < n))
         }))
@@ -278,24 +273,23 @@ impl Livo {
 
     pub(crate) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let st = &self.store;
-        let accent = self.accent();
 
         // 账号管理
         let bili_control = match (&self.login, st.bili.cookie.is_empty()) {
-            (Some(_), _) => self.small_btn("bili-cancel", "取消").on_click(cx.listener(|this, _, _, cx| {
+            (Some(_), _) => button("bili-cancel", Btn::Normal, None, "取消").on_click(cx.listener(|this, _, _, cx| {
                 this.login = None;
                 cx.notify()
             })),
-            (None, true) => self.small_btn("bili-login", "扫码登录").on_click(cx.listener(|this, _, _, cx| this.start_bili_login(cx))),
-            (None, false) => self.small_btn("bili-logout", "退出登录").on_click(cx.listener(|this, _, _, cx| this.logout_bili(cx))),
+            (None, true) => button("bili-login", Btn::Normal, None, "扫码登录").on_click(cx.listener(|this, _, _, cx| this.start_bili_login(cx))),
+            (None, false) => button("bili-logout", Btn::Normal, None, "退出登录").on_click(cx.listener(|this, _, _, cx| this.logout_bili(cx))),
         };
         let bili_sub = if st.bili.cookie.is_empty() { "未登录，登录后可观看更高清晰度" } else { "已登录" };
-        let mut account = vec![self.row("哔哩哔哩", Some(bili_sub), div().flex().items_center().gap_3().children((!st.bili.name.is_empty()).then(|| div().text_sm().text_color(rgb(accent)).child(st.bili.name.clone()))).child(bili_control))];
+        let mut account = vec![self.row("哔哩哔哩", Some(bili_sub), div().flex().items_center().gap_3().children((!st.bili.name.is_empty()).then(|| div().t_body().text_color(accent()).child(st.bili.name.clone()))).child(bili_control))];
         if let Some(login) = &self.login {
             // 二维码画成小方格；白底留边方便识别
             let cell = 4.;
-            let qr = div().p_3().bg(rgb(0xffffff)).rounded_lg().flex().flex_col().children(login.qr.chunks(login.width.max(1)).map(|row| div().flex().children(row.iter().map(|&dark| div().size(px(cell)).bg(rgb(if dark { 0x000000 } else { 0xffffff }))))));
-            account.push(div().p_4().flex().items_center().gap_4().border_b_1().border_color(rgb(border())).children((!login.qr.is_empty()).then_some(qr)).child(div().text_sm().text_color(rgb(muted())).child(login.status)).into_any_element());
+            let qr = div().p(px(SPACE_3)).bg(rgb(0xffffff)).rounded(px(RADIUS_MD)).flex().flex_col().children(login.qr.chunks(login.width.max(1)).map(|row| div().flex().children(row.iter().map(|&dark| div().size(px(cell)).bg(rgb(if dark { 0x000000 } else { 0xffffff }))))));
+            account.push(div().p(px(SPACE_4)).flex().items_center().gap(px(SPACE_4)).children((!login.qr.is_empty()).then_some(qr)).child(div().t_body().text_color(muted()).child(login.status)).into_any_element());
         }
         account.push(self.row("斗鱼直播", Some("暂不支持登录，匿名可正常观看"), div()));
         account.push(self.row("虎牙直播", Some("无需登录"), div()));
@@ -322,7 +316,7 @@ impl Livo {
         let home_items = st.home_sort.iter().filter_map(|id| HOME_PAGES.iter().find(|(p, _)| p == id).map(|(_, n)| n.to_string())).collect();
         let site_items = self.sites.iter().map(|s| s.name().to_string()).collect();
         let home = vec![
-            self.row("页面顺序", Some("侧边栏“浏览”的顺序，排第一的是启动页"), self.sort_list("home", home_items, Some("启动页"), |t, i, up, cx| t.move_home(i, up, cx), cx)),
+            self.row("页面顺序", Some("排第一的是启动页"), self.sort_list("home", home_items, Some("启动页"), |t, i, up, cx| t.move_home(i, up, cx), cx)),
             self.row("平台顺序", None, self.sort_list("sites", site_items, None, |t, i, up, cx| t.move_site(i, up, cx), cx)),
         ];
 
@@ -351,9 +345,9 @@ impl Livo {
             self.row("默认开启弹幕", Some("进入直播间时是否显示滚动弹幕"), self.switch("dm-enabled", st.danmaku.enabled, |t, v| t.store.danmaku.enabled = v, cx)),
         ];
         // 滑块行和其他设置行同一版式：标题在左，数值和滑块靠右
-        for (label, value, slider) in self.danmaku_sliders(cx) {
+        for (label, value, slider) in self.danmaku_sliders(false, cx) {
             let hint = (label == "滚动速度").then_some("滚动速度为弹幕横穿画面的秒数，越小越快");
-            let control = div().flex().items_center().gap_3().child(div().w(px(56.)).text_sm().text_right().text_color(rgb(muted())).child(value)).child(slider);
+            let control = div().flex().items_center().gap(px(SPACE_3)).child(div().w(px(56.)).t_timecode().text_right().text_color(muted()).child(value)).child(slider);
             danmaku.push(self.row(label, hint, control));
         }
 
@@ -362,19 +356,21 @@ impl Livo {
             .iter()
             .map(|&(action, label, _)| {
                 let capturing = self.capturing == Some(action);
+                // 键帽：点击进入录入（accent 描边），Esc 取消
                 let chip = div()
                     .id(SharedString::from(format!("key-{action}")))
                     .min_w(px(64.))
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .text_xs()
-                    .text_center()
+                    .h(px(theme::CONTROL_SM))
+                    .px(px(SPACE_2))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(RADIUS_XS))
+                    .t_callout()
                     .cursor_pointer()
-                    .border_1()
-                    .when(capturing, |d| d.border_color(rgb(accent)).text_color(rgb(accent)))
-                    .when(!capturing, |d| d.border_color(rgb(border())).bg(rgb(hover())))
-                    .child(if capturing { "按下新按键…".to_string() } else { key_label(&st.key_for(action)) })
+                    .when(capturing, |d| d.border_2().border_color(accent()).text_color(accent()))
+                    .when(!capturing, |d| d.border_1().border_color(border_strong()).bg(surface()).hover(|s| s.bg(hover())))
+                    .child(if capturing { "按下新的快捷键…".to_string() } else { key_label(&st.key_for(action)) })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.capturing = Some(action);
                         cx.notify()
@@ -385,7 +381,7 @@ impl Livo {
         keys.push(self.row(
             "恢复默认快捷键",
             Some("点击按键后按下新的按键即可修改，Esc 取消；仅在直播间生效"),
-            self.small_btn("keys-reset", "恢复默认").on_click(cx.listener(|this, _, _, cx| {
+            button("keys-reset", Btn::Normal, None, "恢复默认").on_click(cx.listener(|this, _, _, cx| {
                 this.store.keys = Store::default().keys;
                 this.save_and_notify(cx)
             })),
@@ -422,10 +418,10 @@ impl Livo {
         ];
 
         div()
-            .max_w(px(760.))
+            .max_w(px(640.))
             .flex()
             .flex_col()
-            .gap_6()
+            .gap(px(SPACE_6))
             .child(self.section("账号管理", account))
             .child(self.section("外观设置", appearance))
             .child(self.section("主页设置", home))
@@ -438,41 +434,38 @@ impl Livo {
 
     pub(crate) fn render_about(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use crate::about::{can_install, Update, REPO, VERSION};
-        let accent = self.accent();
         let (status, color) = match &self.update {
             Update::Idle => (String::new(), muted()),
             Update::Checking => ("正在检查…".to_string(), muted()),
             Update::Latest => ("已是最新版本".to_string(), muted()),
-            Update::Available { version, .. } => (format!("发现新版本 {version}"), accent),
-            Update::Downloading { got, total, .. } if *total > 0 => (format!("正在下载 {}%", got * 100 / total), accent),
-            Update::Downloading { got, .. } => (format!("正在下载 {:.1}MB", *got as f64 / 1048576.), accent),
-            Update::Ready { version, .. } => (format!("{version} 已就绪，退出时自动安装"), accent),
-            Update::Failed(e) => (e.clone(), muted()),
+            Update::Available { version, .. } => (format!("发现新版本 {version}"), accent()),
+            Update::Downloading { got, total, .. } if *total > 0 => (format!("正在下载 {}%", got * 100 / total), accent()),
+            Update::Downloading { got, .. } => (format!("正在下载 {:.1}MB", *got as f64 / 1048576.), accent()),
+            Update::Ready { version, .. } => (format!("{version} 已就绪，退出时自动安装"), accent()),
+            Update::Failed(e) => (e.clone(), c(pal().danger)),
         };
         let mut update = vec![self.row(
             "检查更新",
             None,
-            div().flex().items_center().gap_3().child(div().text_sm().text_color(rgb(color)).child(status)).child(self.small_btn("check-update", "检查").on_click(cx.listener(|this, _, _, cx| this.check_update(false, cx)))),
+            div().flex().items_center().gap(px(SPACE_3)).child(div().t_body().text_color(color).child(status)).child(button("check-update", Btn::Normal, None, "检查更新").on_click(cx.listener(|this, _, _, cx| this.check_update(false, cx)))),
         )];
         if let Update::Available { version, desc } | Update::Downloading { version, desc, .. } | Update::Ready { version, desc } = &self.update {
             let url = format!("{REPO}/releases/tag/v{version}");
             // 能自动装就下载/重启，开发构建和没出包的平台只能去网页下载
             let action = match &self.update {
-                Update::Available { .. } if can_install(version) => Some(self.small_btn("download-update", "下载并安装").on_click(cx.listener(|this, _, _, cx| this.download_update(cx)))),
-                Update::Available { .. } => Some(self.small_btn("open-release", "前往下载").on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url)))),
-                Update::Ready { .. } => Some(self.small_btn("install-update", "立即重启更新").on_click(cx.listener(|this, _, _, cx| this.install_update(true, cx)))),
+                Update::Available { .. } if can_install(version) => Some(button("download-update", Btn::Primary, None, "下载并安装").on_click(cx.listener(|this, _, _, cx| this.download_update(cx)))),
+                Update::Available { .. } => Some(button("open-release", Btn::Primary, Some("external-link"), "前往下载").on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url)))),
+                Update::Ready { .. } => Some(button("install-update", Btn::Primary, None, "立即重启并更新").on_click(cx.listener(|this, _, _, cx| this.install_update(true, cx)))),
                 _ => None,
             };
             update.push(
                 div()
-                    .p_4()
+                    .p(px(SPACE_4))
                     .flex()
                     .flex_col()
                     .items_start()
-                    .gap_3()
-                    .border_b_1()
-                    .border_color(rgb(border()))
-                    .child(div().text_xs().text_color(rgb(muted())).child(desc.clone()))
+                    .gap(px(SPACE_3))
+                    .child(div().t_callout().text_color(muted()).child(desc.clone()))
                     .children(action)
                     .into_any_element(),
             );
@@ -480,75 +473,61 @@ impl Livo {
         update.push(self.row("自动更新", Some("启动时和每 6 小时检查新版本，后台下载并校验签名，退出时自动安装"), self.switch("auto-update", self.store.auto_update, |t, v| t.store.auto_update = v, cx)));
         update.push(self.row("接收测试版", Some("也更新到预发行版本"), self.switch("update-beta", self.store.update_beta, |t, v| t.store.update_beta = v, cx)));
         div()
-            .max_w(px(760.))
+            .max_w(px(640.))
             .flex()
             .flex_col()
-            .gap_6()
+            .gap(px(SPACE_6))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_4()
-                    .child(img(gpui::ImageSource::Resource(gpui::Resource::Embedded("logo.svg".into()))).size(px(112.)).flex_none())
-                    .child(div().flex().flex_col().gap_0p5().child(div().text_2xl().font_weight(FontWeight::BOLD).child("LIVO")).child(div().text_sm().text_color(rgb(muted())).child(format!("版本 {VERSION}")))),
+                    .gap(px(SPACE_4))
+                    .child(img(gpui::ImageSource::Resource(gpui::Resource::Embedded("logo.svg".into()))).size(px(96.)).flex_none())
+                    .child(div().flex().flex_col().gap(px(SPACE_1)).child(div().t_title2().child("Livo")).child(div().t_body().text_color(muted()).child(format!("版本 {VERSION}"))).child(div().t_callout().text_color(subtle()).child("哔哩哔哩、斗鱼、虎牙的直播放进同一个窗口"))),
             )
             .child(self.section("更新", update))
             .child(self.section(
                 "项目",
-                vec![self.row("GitHub", Some(REPO), self.small_btn("open-repo", "打开").on_click(cx.listener(|_, _, _, cx| cx.open_url(REPO))))],
+                vec![self.row("GitHub", Some(REPO), button("open-repo", Btn::Normal, Some("external-link"), "在浏览器中打开").on_click(cx.listener(|_, _, _, cx| cx.open_url(REPO))))],
             ))
     }
 
     pub(crate) fn render_history(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
         if self.store.history.is_empty() {
-            return div().pt(px(120.)).flex().justify_center().text_color(rgb(muted())).child("还没有观看记录").into_any_element();
+            return empty_state("history", "还没有观看记录", "看过的直播间会出现在这里", None).into_any_element();
         }
-        let cols = ((width + GAP) / (MIN_CARD + GAP)).floor().max(1.);
-        let card_w = ((width - GAP * (cols - 1.)) / cols - 0.5).floor();
+        let (_, card_w) = grid_cols(width);
         let cards = self.store.history.iter().enumerate().map(|(i, h)| {
-            let site = self.site_index(&h.site).map_or("", |s| self.sites[s].name());
             let (site_id, room_id) = (h.site.clone(), h.room_id.clone());
-            // 删除按钮浮在封面右上角，悬停卡片时出现
+            // 删除按钮浮在封面右上角，悬停卡片时出现；能撤销的小操作，不弹确认
             let delete = div()
                 .id(SharedString::from(format!("history-del-{i}")))
                 .absolute()
-                .top(px(8.))
-                .right(px(8.))
-                .size(px(24.))
+                .top(px(SPACE_2))
+                .right(px(SPACE_2))
+                .size(px(theme::CONTROL_SM))
                 .rounded_full()
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(tint(0x000000, 0xa0))
-                .text_color(rgb(0xffffff))
-                .text_xs()
+                .bg(c(theme::DARK.scrim))
                 .cursor_pointer()
                 .opacity(0.)
                 .group_hover("card", |s| s.opacity(1.))
-                .child("✕")
+                .tooltip(tip("从记录中移除", None))
+                .child(icon("x", 14., c(theme::DARK.on_media)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.store.history.remove(i);
                     this.save_and_notify(cx);
                     cx.stop_propagation()
                 }));
-            div()
-                .relative()
-                .child(
-                    self.card(SharedString::from(format!("history-{}-{}", h.site, h.room_id)), card_w, &h.cover, &h.title, &format!("{} · {site} · {}", h.user_name, time_ago(h.time)), Some(String::new()), site)
-                        .on_click(cx.listener(move |this, _, _, cx| this.open_on(&site_id, room_id.clone(), cx)))
-                        .child(delete),
-                )
+            div().relative().child(
+                self.card(SharedString::from(format!("history-{}-{}", h.site, h.room_id)), card_w, &h.cover, &h.title, &format!("{} · {}", h.user_name, time_ago(h.time)), &h.site, CardLive::Unknown)
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_on(&site_id, room_id.clone(), cx)))
+                    .child(delete),
+            )
         });
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(div().flex().child(self.small_btn("history-clear", "清空记录").on_click(cx.listener(|this, _, _, cx| {
-                this.store.history.clear();
-                this.save_and_notify(cx)
-            }))))
-            .child(div().flex().flex_wrap().gap(px(GAP)).children(cards))
-            .into_any_element()
+        div().flex().flex_wrap().gap(px(GAP)).children(cards).into_any_element()
     }
 }
 
