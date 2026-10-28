@@ -580,7 +580,7 @@ const SETTINGS_TABS: [(&str, &str); 4] = [("通用", "settings"), ("播放", "pl
 /// 修改立即生效，没有「保存」。内容由 Livo 渲染，Livo 一变这里就重绘
 pub(crate) struct SettingsWindow {
     livo: Entity<Livo>,
-    tab: usize,
+    pub(crate) tab: usize,
     focus: FocusHandle,
 }
 
@@ -664,41 +664,55 @@ impl Render for SettingsWindow {
 }
 
 impl Livo {
-    /// 打开设置窗口；已经开着就拿到前面
-    pub(crate) fn open_settings(&mut self, cx: &mut Context<Self>) {
+    /// 打开设置窗口（可指定标签）；已经开着就拿到前面
+    pub(crate) fn open_settings(&mut self, tab: Option<usize>, cx: &mut Context<Self>) {
         if let Some(h) = self.settings_win {
-            if h.update(cx, |_, window, _| window.activate_window()).is_ok() {
+            let shown = h.update(cx, |w, window, cx| {
+                window.activate_window();
+                if let Some(t) = tab {
+                    w.tab = t;
+                    cx.notify()
+                }
+            });
+            if shown.is_ok() {
                 return;
             }
         }
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(600.), px(640.)), cx))),
-            titlebar: Some(TitlebarOptions { title: Some("通用".into()), appears_transparent: true, traffic_light_position: Some(point(px(12.), px(8.))) }),
-            is_resizable: false,
-            is_minimizable: true,
-            ..Default::default()
-        };
         let livo = cx.entity();
-        match cx.open_window(options, |window, cx| {
-            cx.new(|cx| {
-                cx.observe(&livo, |_, _, cx| cx.notify()).detach();
-                // 关掉设置窗口时 Livo 忘掉它
-                cx.on_release(|this: &mut SettingsWindow, cx| {
-                    this.livo.update(cx, |l, _| {
-                        l.settings_win = None;
-                        l.capturing = None;
-                        l.ctx_menu = None;
+        // 开窗口时 GPUI 会立刻画第一帧，设置窗口要读 Livo；推迟到这次 Livo 更新结束之后再开，否则会重入 panic
+        cx.defer(move |cx| {
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(600.), px(640.)), cx))),
+                titlebar: Some(TitlebarOptions { title: Some("通用".into()), appears_transparent: true, traffic_light_position: Some(point(px(12.), px(8.))) }),
+                is_resizable: false,
+                is_minimizable: true,
+                ..Default::default()
+            };
+            let opened = cx.open_window(options, |window, cx| {
+                cx.new(|cx| {
+                    cx.observe(&livo, |_, _, cx| cx.notify()).detach();
+                    // 关掉设置窗口时 Livo 忘掉它
+                    cx.on_release(|this: &mut SettingsWindow, cx| {
+                        this.livo.update(cx, |l, _| {
+                            l.settings_win = None;
+                            l.capturing = None;
+                            l.ctx_menu = None;
+                        })
                     })
+                    .detach();
+                    let focus = cx.focus_handle();
+                    window.focus(&focus);
+                    SettingsWindow { livo: livo.clone(), tab: tab.unwrap_or(0), focus }
                 })
-                .detach();
-                let focus = cx.focus_handle();
-                window.focus(&focus);
-                SettingsWindow { livo, tab: 0, focus }
-            })
-        }) {
-            Ok(h) => self.settings_win = Some(h),
-            Err(e) => self.error = Some(format!("打不开设置窗口：{e}")),
-        }
+            });
+            livo.update(cx, |l, cx| {
+                match opened {
+                    Ok(h) => l.settings_win = Some(h),
+                    Err(e) => l.error = Some(format!("打不开设置窗口：{e}")),
+                }
+                cx.notify()
+            });
+        });
     }
 
     /// 正在录入快捷键时，这一下按键就是新绑定：Esc 取消，⌫ 清除。返回 true 表示按键已被录入用掉

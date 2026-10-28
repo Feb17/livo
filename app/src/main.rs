@@ -513,6 +513,12 @@ impl Livo {
         let first = s.store.home_sort.iter().find_map(|id| Tab::from_id(id)).unwrap_or(Tab::Recommend);
         s.site_tab = s.store.home_sort.iter().filter_map(|id| Tab::from_id(id)).find(|t| t.is_site_page()).unwrap_or(Tab::Recommend);
         s.go(first, cx);
+        // 侧栏「关注」要一启动就显示「N 在播」，不等进关注页
+        if first != Tab::Follow && !s.store.follows.is_empty() {
+            s.load_follows(cx);
+        }
+        #[cfg(debug_assertions)]
+        s.debug_start(cx);
         if s.store.auto_update {
             s.check_update(true, cx);
         }
@@ -630,6 +636,55 @@ impl Livo {
         self.all = site.is_none() && self.tab != Tab::Category;
         let tab = if self.tab.is_site_page() { self.tab } else { self.site_tab };
         self.go(tab, cx);
+    }
+
+    /// 调试构建专用：LIVO_START 直接打开某个页面，给截图核对界面用（不用模拟点击）。
+    /// 取值：category、follow、history、about、settings[:标签序号]、search:关键词、room:平台:房间号、site:序号（单个平台的推荐）、nosidebar
+    #[cfg(debug_assertions)]
+    fn debug_start(&mut self, cx: &mut Context<Self>) {
+        let Ok(start) = std::env::var("LIVO_START") else { return };
+        let mut parts = start.splitn(3, ':');
+        match (parts.next().unwrap_or(""), parts.next(), parts.next()) {
+            ("category", ..) => self.nav(cx, |t, cx| t.go(Tab::Category, cx)),
+            ("follow", ..) => self.nav(cx, |t, cx| t.go(Tab::Follow, cx)),
+            ("history", ..) => self.nav(cx, |t, cx| t.go(Tab::History, cx)),
+            ("about", ..) => self.nav(cx, |t, cx| t.go(Tab::About, cx)),
+            ("nosidebar", ..) => self.show_sidebar = false,
+            // 在窗口中间弹出一个直播间右键菜单（核对菜单样式；没法模拟右键时用）
+            ("menu", ..) => {
+                let f = Follow { site: "douyu".into(), room_id: "252140".into(), user_name: "示例".into(), ..Default::default() };
+                let remove = MenuEntry::item("从历史中移除", Some("trash-2"), Rc::new(|_: &mut Livo, _: &mut Window, _: &mut Context<Livo>| {}) as Act).danger();
+                let m = self.room_menu(f, true, vec![remove]);
+                self.open_ctx(point(px(520.), px(260.)), m, false, cx)
+            }
+            ("site", Some(i), _) => {
+                let i = i.parse().unwrap_or(0);
+                self.nav(cx, |t, cx| t.set_filter(Some(i), cx))
+            }
+            ("search", Some(kw), _) => {
+                self.keyword = kw.to_string();
+                self.nav(cx, |t, cx| t.go(Tab::Search, cx))
+            }
+            ("room", Some(site), Some(id)) => {
+                let (site, id) = (self.site_index(site).map_or("", |i| self.sites[i].id()), id.to_string());
+                self.nav(cx, |t, cx| t.open_on(site, id, cx));
+                // LIVO_PIP：进直播间几秒后打开画中画
+                if std::env::var_os("LIVO_PIP").is_some() {
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(Duration::from_secs(8)).await;
+                        this.update(cx, |this, cx| {
+                            this.toggle_pip(cx);
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+            }
+            ("settings", tab, _) => {
+                self.open_settings(Some(tab.and_then(|t| t.parse().ok()).unwrap_or(0)), cx);
+            }
+            _ => {}
+        }
     }
 
     /// 当前所在的位置，给后退 / 前进用
@@ -1772,7 +1827,7 @@ impl Render for Livo {
                 this.nav(cx, |t, cx| t.go(Tab::About, cx));
                 this.check_update(false, cx)
             }))
-            .on_action(cx.listener(|this, _: &menus::Settings, _, cx| this.open_settings(cx)))
+            .on_action(cx.listener(|this, _: &menus::Settings, _, cx| this.open_settings(None, cx)))
             .on_action(cx.listener(|this, _: &menus::ShowRecommend, _, cx| this.nav(cx, |t, cx| t.go(Tab::Recommend, cx))))
             .on_action(cx.listener(|this, _: &menus::ShowCategory, _, cx| this.nav(cx, |t, cx| t.go(Tab::Category, cx))))
             .on_action(cx.listener(|this, _: &menus::ShowFollow, _, cx| this.nav(cx, |t, cx| t.go(Tab::Follow, cx))))
@@ -1820,7 +1875,7 @@ impl Render for Livo {
                     .on_action(cx.listener(|this, _: &menus::ToggleFollow, _, cx| this.toggle_follow(cx)))
                     .on_action(cx.listener(|this, _: &menus::CopyLink, _, cx| this.copy_room_link(cx)))
                     .on_action(cx.listener(|this, _: &menus::CloseRoom, _, cx| this.leave_room(cx)))
-                    .on_action(cx.listener(|this, _: &menus::PictureInPicture, window, cx| this.toggle_pip(window, cx)))
+                    .on_action(cx.listener(|this, _: &menus::PictureInPicture, _, cx| this.toggle_pip(cx)))
             })
             .size_full()
             .flex()
@@ -2320,7 +2375,7 @@ impl Livo {
         vec![
             MenuEntry::item("在浏览器中打开", Some("external-link"), Rc::new(move |_: &mut Livo, _: &mut Window, cx: &mut Context<Livo>| cx.open_url(&url)) as Act),
             MenuEntry::Sep,
-            MenuEntry::item(if self.pip.is_some() { "退出画中画" } else { "画中画" }, Some("picture-in-picture-2"), act(|t, w, cx| t.toggle_pip(w, cx))).key("⌥⌘P"),
+            MenuEntry::item(if self.pip.is_some() { "退出画中画" } else { "画中画" }, Some("picture-in-picture-2"), act(|t, _, cx| t.toggle_pip(cx))).key("⌥⌘P"),
             MenuEntry::item(if self.show_chat { "收起弹幕栏" } else { "展开弹幕栏" }, Some("message-square-text"), act(|t, _, cx| {
                 t.show_chat = !t.show_chat;
                 cx.notify()
@@ -2704,7 +2759,7 @@ impl Livo {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_danmaku(cx))),
             )
             .child(media_btn("danmaku-settings", "sliders-horizontal", self.menu == Some(Menu::Danmaku)).tooltip(tip("弹幕设置", None)).on_click(cx.listener(toggle_menu(Menu::Danmaku))))
-            .child(media_btn("pip", "picture-in-picture-2", self.pip.is_some()).tooltip(tip(if self.pip.is_some() { "退出画中画" } else { "画中画" }, Some("⌥⌘P"))).on_click(cx.listener(|this, _, window, cx| this.toggle_pip(window, cx))))
+            .child(media_btn("pip", "picture-in-picture-2", self.pip.is_some()).tooltip(tip(if self.pip.is_some() { "退出画中画" } else { "画中画" }, Some("⌥⌘P"))).on_click(cx.listener(|this, _, _, cx| this.toggle_pip(cx))))
             .child(media_btn("fullscreen", if full { "minimize" } else { "maximize" }, false).tooltip(tip(if full { "退出全屏" } else { "全屏" }, Some(&key("fullscreen")))).on_click(|_, window, _| window.toggle_fullscreen()));
         let shown = self.controls_shown(playing);
         let bar = div()
@@ -2858,7 +2913,7 @@ impl Livo {
                     .gap(px(SPACE_3))
                     .child(icon("picture-in-picture-2", 20., c(media.text_muted)))
                     .child(div().t_body().text_color(c(media.text_muted)).child("正在画中画中播放"))
-                    .child(media_btn_text("pip-back", "回到主窗口").on_click(cx.listener(|this, _, window, cx| this.toggle_pip(window, cx))))
+                    .child(media_btn_text("pip-back", "回到主窗口").on_click(cx.listener(|this, _, _, cx| this.toggle_pip(cx))))
                     .into_any_element()
             } else {
                 self.video.clone().into_any_element()
@@ -3020,9 +3075,9 @@ struct Pip {
 impl Render for Pip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let livo = self.livo.clone();
-        div().id("pip").size_full().bg(rgb(0x000000)).child(self.video.clone()).on_click(move |ev, window, cx| {
+        div().id("pip").size_full().bg(rgb(0x000000)).child(self.video.clone()).on_click(move |ev, _, cx| {
             if ev.click_count() >= 2 {
-                livo.update(cx, |this, cx| this.toggle_pip(window, cx)).ok();
+                livo.update(cx, |this, cx| this.toggle_pip(cx)).ok();
             }
         })
     }
@@ -3031,7 +3086,7 @@ impl Render for Pip {
 impl Livo {
     /// 画中画（⌥⌘P）：视频移到屏幕右下角的置顶小窗，主窗口的画面位置留一句提示；再按一次或双击小窗回来。
     /// shortcut: 离开直播间时画中画一起关掉，要做「主窗口离开直播间、小窗继续播」得把播放器从 Room 里拆出来
-    fn toggle_pip(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_pip(&mut self, cx: &mut Context<Self>) {
         if let Some(h) = self.pip.take() {
             h.update(cx, |_, window, _| window.remove_window()).ok();
             return cx.notify();

@@ -102,7 +102,7 @@ pub const KEY_ACTIONS: [(&str, &str, &str); 11] = [
     ("danmaku", "显示/隐藏弹幕", "d"),
     ("mute", "静音/取消静音", "m"),
     ("refresh", "刷新直播间", "r"),
-    ("chat", "收起/展开聊天区", "c"),
+    ("chat", "收起/展开弹幕栏", "c"),
     ("volume_up", "调高音量", "up"),
     ("volume_down", "调低音量", "down"),
     ("pause", "暂停/继续", "space"),
