@@ -55,11 +55,16 @@ pub struct Icons;
 
 impl AssetSource for Icons {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        const LOCKUP: &[u8] = include_bytes!("../assets/livo-lockup.svg");
+        const LOCKUP_REVERSE: &[u8] = include_bytes!("../assets/livo-lockup-reverse.svg");
+        // 关于页的组合标识更大：同一份 SVG，宽改成 160（GPUI 按 width/height 栅格化）
+        let about = |svg: &[u8]| Cow::Owned(String::from_utf8_lossy(svg).replace(r#"width="96" height="39.17""#, r#"width="160" height="65.28""#).into_bytes());
         match path {
-            "logo.svg" => return Ok(Some(Cow::Borrowed(include_bytes!("../assets/logo.svg")))),
             // 设计系统 Logos 组原样复制，只把 width/height 改成显示尺寸，GPUI 按它栅格化
-            "livo-lockup.svg" => return Ok(Some(Cow::Borrowed(include_bytes!("../assets/livo-lockup.svg")))),
-            "livo-lockup-reverse.svg" => return Ok(Some(Cow::Borrowed(include_bytes!("../assets/livo-lockup-reverse.svg")))),
+            "livo-lockup.svg" => return Ok(Some(Cow::Borrowed(LOCKUP))),
+            "livo-lockup-reverse.svg" => return Ok(Some(Cow::Borrowed(LOCKUP_REVERSE))),
+            "about-lockup.svg" => return Ok(Some(about(LOCKUP))),
+            "about-lockup-reverse.svg" => return Ok(Some(about(LOCKUP_REVERSE))),
             _ => {}
         }
         Ok(ICONS.iter().find(|(name, _)| *name == path).map(|(_, body)| {
@@ -80,6 +85,15 @@ pub fn icon(name: &'static str, size: f32, color: impl Into<Hsla>) -> Svg {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn about_lockup_is_resized() {
+        use gpui::AssetSource;
+        for name in ["about-lockup.svg", "about-lockup-reverse.svg"] {
+            let svg = String::from_utf8(super::Icons.load(name).unwrap().unwrap().into_owned()).unwrap();
+            assert!(svg.contains(r#"width="160" height="65.28""#), "{name} 没有改成关于页尺寸");
+        }
+    }
+
     #[test]
     fn every_icon_loads_as_svg() {
         use gpui::AssetSource;

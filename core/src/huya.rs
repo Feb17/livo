@@ -112,7 +112,7 @@ fn room_item(x: &Value, prefix: &str) -> RoomItem {
     if title.is_empty() {
         title = s(&x[format!("{prefix}roomName")]);
     }
-    RoomItem { room_id: s(&x["room_id"]), title, cover, user_name: s(&x[format!("{prefix}nick")]), online: i(&x[format!("{prefix}total_count")]) }
+    RoomItem { room_id: s(&x["room_id"]), title, cover, user_name: s(&x[format!("{prefix}nick")]), avatar: s(&x[if prefix.is_empty() { "avatar180" } else { "game_imgUrl" }]), online: i(&x[format!("{prefix}total_count")]) }
 }
 
 fn list_rooms(v: &Value) -> RoomPage {
@@ -278,6 +278,7 @@ impl Huya {
             user_avatar: s(&profile["sAvatar180"]),
             online: i(&live["lTotalCount"]),
             live: v["roomInfo"]["eLiveStatus"] == 2,
+            start_time: i(&live["iStartTime"]),
             danmaku: DanmakuArgs::Huya { ayyuid: i(&live["lYyid"]), top_sid: top, sub_sid: sub },
         })
     }
