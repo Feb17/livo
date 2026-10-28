@@ -369,6 +369,8 @@ struct Livo {
     ctx_menu: Option<CtxMenu>,
     /// 控制条显示到这个时刻：鼠标在画面上移动就往后推 3 秒，离开画面立即到期
     controls_until: Instant,
+    /// 键盘焦点在某个控件上（在用 Tab 操作）：控制条保持显示，焦点不会落在看不见的按钮上
+    keyboard_focus: bool,
     /// 画中画小窗（⌥⌘P）
     pip: Option<gpui::WindowHandle<Pip>>,
     /// 画中画开着时离开直播间：房间（连同平台序号）挪到这里接着播，回到主窗口时放回去，关掉小窗才销毁
@@ -473,6 +475,7 @@ impl Livo {
             loaded_covers: Default::default(),
             settings_win: None,
             controls_until: Instant::now(),
+            keyboard_focus: false,
             follow_sort: 0,
             page: 0,
             has_more: false,
@@ -1832,6 +1835,8 @@ impl Render for Livo {
         }
         // 直播间里全屏时只留视频
         let full = self.room.is_some() && window.is_fullscreen();
+        // 鼠标点击会把焦点还给根视图，所以焦点不在根上就是在用键盘操作
+        self.keyboard_focus = !self.focus.is_focused(window);
         if let WindowBounds::Windowed(b) = window.window_bounds() {
             self.store.window = Some([f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)]);
         }
@@ -2696,7 +2701,7 @@ impl Livo {
 
     /// 控制条是否显示：暂停或菜单打开时常驻；播放中鼠标静止 3 秒或离开画面后淡出
     fn controls_shown(&self, playing: bool) -> bool {
-        !playing || self.menu.is_some() || Instant::now() < self.controls_until
+        !playing || self.menu.is_some() || self.keyboard_focus || Instant::now() < self.controls_until
     }
 
     /// 鼠标在画面上移动：控制条出现，3 秒后到期时重绘一次让它淡出
