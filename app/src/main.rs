@@ -2169,7 +2169,7 @@ impl Livo {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .cursor_pointer()
+                    .cursor_pointer().focusable_ring()
                     .hover(|s| s.bg(hover()))
                     .tooltip(tip("清除搜索", Some("Esc")))
                     .child(icon("x", 14., muted()))
@@ -2576,6 +2576,19 @@ impl Livo {
             .flex()
             .items_center()
             .cursor_pointer()
+            .focusable_ring()
+            // 键盘：←/→ 每次一步，⌥ + ←/→ 十步（设计系统 Slider）
+            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+                let dir = match ev.keystroke.key.as_str() {
+                    "left" => -1.,
+                    "right" => 1.,
+                    _ => return,
+                };
+                let n = if ev.keystroke.modifiers.alt { 10. } else { 1. };
+                let step = this.slider_step(idx);
+                set(this, (frac + dir * n * step).clamp(0., 1.), cx);
+                cx.stop_propagation();
+            }))
             .child(canvas(move |b, _, _| bar.set(b), |_, _, _, _| {}).absolute().size_full())
             .child(div().w_full().h(px(4.)).rounded_full().bg(track).child(div().h_full().w(relative(frac)).rounded_full().bg(fill)))
             .child(div().absolute().left(relative(frac)).ml(px(-thumb / 2.)).size(px(thumb)).rounded_full().bg(rgb(0xffffff)).shadow(thumb_shadow))
@@ -2589,6 +2602,17 @@ impl Livo {
                     set(this, f, cx)
                 }
             }))
+    }
+
+    /// 滑块按键盘调一步的比例：0 音量 5%，1 字号 1 号，2 不透明度 5%，3 滚动速度 1 秒，4 显示区域 5%，5 时移 10 秒
+    fn slider_step(&self, idx: usize) -> f32 {
+        match idx {
+            1 => 1. / 48.,
+            2 | 4 => 0.05 / 0.9,
+            3 => 1. / 29.,
+            5 => self.timeshift.map_or(0.05, |(s, e, _)| (10. / (e - s).max(10.)) as f32),
+            _ => 0.05,
+        }
     }
 
     /// 弹幕设置的四个滑块：(标题, 当前值, 滑块)。字号、不透明度、滚动速度、显示区域（范围同原项目，字号收窄到 12-60）
@@ -2628,7 +2652,7 @@ impl Livo {
         }
         let tabs = self.cats.iter().enumerate().map(|(i, cat)| {
             let on = i == self.cat_idx;
-            let t = div().id(SharedString::from(format!("cat{i}"))).h(px(theme::CONTROL_MD)).px(px(SPACE_3)).rounded(px(RADIUS_SM)).flex().items_center().cursor_pointer();
+            let t = div().id(SharedString::from(format!("cat{i}"))).h(px(theme::CONTROL_MD)).px(px(SPACE_3)).rounded(px(RADIUS_SM)).flex().items_center().cursor_pointer().focusable_ring();
             if on { t.bg(accent_soft()).text_color(accent()).font_weight(FontWeight::SEMIBOLD) } else { t.text_color(muted()).hover(|s| s.bg(hover()).text_color(text())) }.child(cat.name.clone()).on_click(cx.listener(move |this, _, _, cx| {
                 this.cat_idx = i;
                 this.touch("cats");
@@ -2645,7 +2669,7 @@ impl Livo {
                 .bg(surface())
                 .border_1()
                 .border_color(border())
-                .cursor_pointer()
+                .cursor_pointer().focusable_ring()
                 .hover(|st| st.border_color(accent()).shadow(shadow_card()))
                 .flex()
                 .flex_col()
@@ -2728,7 +2752,7 @@ impl Livo {
                 .text_size(px(12.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(white)
-                .cursor_pointer()
+                .cursor_pointer().focusable_ring()
                 .hover(|s| s.bg(c(0xFFFFFF24)))
                 .child(label)
                 .child(icon("chevron-down", 14., white))
@@ -2766,7 +2790,7 @@ impl Livo {
                         .gap(px(SPACE_1))
                         .text_size(px(12.))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .cursor_pointer()
+                        .cursor_pointer().focusable_ring()
                         .hover(|s| s.bg(c(0xFFFFFF40)))
                         .child(icon("radio", 14., white))
                         .child("回到直播")
@@ -2869,7 +2893,7 @@ impl Livo {
                 .flex()
                 .items_center()
                 .gap(px(SPACE_2))
-                .cursor_pointer()
+                .cursor_pointer().focusable_ring()
                 // macOS 菜单惯例：高亮项 accent-fill 底 + on-accent 字
                 .hover(|s| s.bg(c(d.accent_fill)).text_color(c(d.on_accent)))
                 .on_click(cx.listener(move |this, _, _, cx| match menu {

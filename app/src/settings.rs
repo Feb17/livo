@@ -212,7 +212,7 @@ impl Livo {
             Some(gen) => track(1. - to).with_animation((id, gen), Animation::new(Duration::from_millis(150)).with_easing(ease_out_quint()), move |_, t| track(1. - to + (2. * to - 1.) * t)).into_any_element(),
             None => track(to).into_any_element(),
         };
-        div().id(id).w(px(38.)).h(px(22.)).flex_none().cursor_pointer().child(body).on_click(cx.listener(move |this, _, _, cx| {
+        div().id(id).w(px(38.)).h(px(22.)).flex_none().cursor_pointer().focusable_ring().child(body).on_click(cx.listener(move |this, _, _, cx| {
             this.touch(id);
             set(this, !on);
             this.save_and_notify(cx)
@@ -540,7 +540,7 @@ impl Livo {
                 .items_center()
                 .justify_center()
                 .bg(c(theme::DARK.scrim))
-                .cursor_pointer()
+                .cursor_pointer().focusable_ring()
                 .opacity(0.)
                 .group_hover("card", |s| s.opacity(1.))
                 .tooltip(tip("从记录中移除", None))

@@ -210,7 +210,7 @@ pub fn media_btn(id: impl Into<SharedString>, name: &'static str, pressed: bool)
         .flex()
         .items_center()
         .justify_center()
-        .cursor_pointer()
+        .cursor_pointer().focusable_ring()
         .hover(|s| s.bg(c(0xFFFFFF24)))
         .child(icon(name, 20., c(if pressed { d.violet_300 } else { d.on_media })))
 }
