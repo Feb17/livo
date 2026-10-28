@@ -55,8 +55,12 @@ pub struct Icons;
 
 impl AssetSource for Icons {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-        if path == "logo.svg" {
-            return Ok(Some(Cow::Borrowed(include_bytes!("../assets/logo.svg"))));
+        match path {
+            "logo.svg" => return Ok(Some(Cow::Borrowed(include_bytes!("../assets/logo.svg")))),
+            // 设计系统 Logos 组原样复制，只把 width/height 改成显示尺寸，GPUI 按它栅格化
+            "livo-lockup.svg" => return Ok(Some(Cow::Borrowed(include_bytes!("../assets/livo-lockup.svg")))),
+            "livo-lockup-reverse.svg" => return Ok(Some(Cow::Borrowed(include_bytes!("../assets/livo-lockup-reverse.svg")))),
+            _ => {}
         }
         Ok(ICONS.iter().find(|(name, _)| *name == path).map(|(_, body)| {
             let svg = format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{body}</svg>"##);

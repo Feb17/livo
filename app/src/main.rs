@@ -1603,6 +1603,16 @@ impl Livo {
                     window.titlebar_double_click()
                 }
             }))
+            // 组合标识：浅色用标准彩色版，深色用反白版；宽 96 是设计系统规定的最小屏幕宽度
+            .child(
+                div().px(px(SPACE_3)).pt(px(SPACE_2)).pb(px(SPACE_1)).flex_none().child(
+                    img(gpui::ImageSource::Resource(gpui::Resource::Embedded(
+                        if LIGHT.load(Ordering::Relaxed) { "livo-lockup.svg" } else { "livo-lockup-reverse.svg" }.into(),
+                    )))
+                    .w(px(96.))
+                    .h(px(39.17)),
+                ),
+            )
             .child(nav_label("发现"))
             .child(div().flex().flex_col().gap_0p5().children(discover))
             .child(nav_label("平台"))
