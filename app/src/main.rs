@@ -371,6 +371,10 @@ struct Livo {
     controls_until: Instant,
     /// 画中画小窗（⌥⌘P）
     pip: Option<gpui::WindowHandle<Pip>>,
+    /// 画中画开着时离开直播间：房间（连同平台序号）挪到这里接着播，回到主窗口时放回去，关掉小窗才销毁
+    pip_room: Option<(usize, Room)>,
+    /// 浏览页里已经加载好的封面（每帧查一次图片缓存）：加载完成的那一帧起播 150ms 淡入
+    loaded_covers: std::collections::HashSet<String>,
     /// 设置窗口（⌘,）
     settings_win: Option<gpui::WindowHandle<settings::SettingsWindow>>,
     /// 关注页排序：0 在播优先，1 最近关注
@@ -465,6 +469,8 @@ impl Livo {
             show_sidebar: true,
             ctx_menu: None,
             pip: None,
+            pip_room: None,
+            loaded_covers: Default::default(),
             settings_win: None,
             controls_until: Instant::now(),
             follow_sort: 0,
@@ -980,6 +986,10 @@ impl Livo {
     }
 
     fn open_room(&mut self, room_id: String, cx: &mut Context<Self>) {
+        // 进别的直播间：画中画里那个先停掉（视频画面只有一份）
+        if self.pip_room.is_some() {
+            self.close_pip(cx);
+        }
         let site = self.site();
         let level = self.store.live.quality_level;
         let memory = self.store.live.quality_memory.get(site.id()).cloned();
@@ -1026,7 +1036,8 @@ impl Livo {
             cx.spawn(async move |this, cx| {
                 while let Some(m) = rx.recv().await {
                     let alive = this.update(cx, |this, cx| {
-                        let Some(room) = this.room.as_mut().filter(|r| r.id == id) else { return false };
+                        // 画中画里接着播的房间也要收弹幕
+                        let Some(room) = this.room.as_mut().filter(|r| r.id == id).or_else(|| this.pip_room.as_mut().map(|(_, r)| r).filter(|r| r.id == id)) else { return false };
                         match m {
                             LiveMessage::Online(n) => {
                                 room.online = n;
@@ -1079,11 +1090,15 @@ impl Livo {
     }
 
     fn close_room(&mut self, cx: &mut Context<Self>) {
-        if let Some(h) = self.pip.take() {
-            h.update(cx, |_, window, _| window.remove_window()).ok();
+        self.page_gen += 1;
+        // 画中画开着：主窗口离开直播间，小窗接着播
+        if self.pip.is_some() {
+            if let Some(room) = self.room.take() {
+                self.pip_room = Some((self.site_idx, room));
+            }
+            return cx.notify();
         }
         self.exit_gen += 1;
-        self.page_gen += 1;
         self.room = None;
         self.video.update(cx, |v, cx| {
             v.view = None;
@@ -1150,7 +1165,16 @@ impl Livo {
     }
 
     fn player(&self) -> Option<&mpv::Player> {
-        self.room.as_ref().and_then(|r| r.player.as_ref())
+        self.room.as_ref().or(self.pip_room.as_ref().map(|(_, r)| r)).and_then(|r| r.player.as_ref())
+    }
+
+    /// 关掉画中画：小窗里接着播的房间一起停掉
+    fn close_pip(&mut self, cx: &mut Context<Self>) {
+        self.pip_room = None;
+        if let Some(h) = self.pip.take() {
+            // 推迟到当前事件处理完：双击小窗时正处在它自己的事件里，这时 update 它会失败
+            cx.defer(move |cx| h.update(cx, |_, window, _| window.remove_window()).unwrap_or(()));
+        }
     }
 
     /// 暂停/继续：播放中只暂停 mpv，缓存照常下载，继续播放就是时移；没在播放时开始播放
@@ -1813,6 +1837,17 @@ impl Render for Livo {
         }
         let content_w = f32::from(window.viewport_size().width) - if self.show_sidebar && !full { SIDEBAR_WIDTH } else { 0. };
         self.ui_scale = if full { (f32::from(window.viewport_size().width) / 900.).max(1.) } else { 1. };
+        // GPUI 的 img 没有「加载完成」回调：查同一个图片缓存，加载好的封面才套上淡入动画
+        if self.room.is_none() {
+            let covers: Vec<String> = match self.tab {
+                Tab::History => self.store.history.iter().map(|h| h.cover.clone()).collect(),
+                _ => self.rooms.iter().map(|(_, r)| r.cover.clone()).collect(),
+            };
+            self.loaded_covers = covers
+                .into_iter()
+                .filter(|u| !u.is_empty() && self.images.update(cx, |c, cx| matches!(gpui::ImageCache::load(c, &gpui::Resource::Uri(u.clone().into()), window, cx), Some(Ok(_)))))
+                .collect();
+        }
         let main = match &self.room {
             Some(room) => self.render_room(room, full, cx),
             None => self.render_browse(content_w, cx).into_any_element(),
@@ -1877,8 +1912,9 @@ impl Render for Livo {
                     .on_action(cx.listener(|this, _: &menus::ToggleFollow, _, cx| this.toggle_follow(cx)))
                     .on_action(cx.listener(|this, _: &menus::CopyLink, _, cx| this.copy_room_link(cx)))
                     .on_action(cx.listener(|this, _: &menus::CloseRoom, _, cx| this.leave_room(cx)))
-                    .on_action(cx.listener(|this, _: &menus::PictureInPicture, _, cx| this.toggle_pip(cx)))
             })
+            // 离开直播间后画中画还在播，⌥⌘P 照样能把它叫回主窗口
+            .when(self.room.is_some() || self.pip.is_some(), |d| d.on_action(cx.listener(|this, _: &menus::PictureInPicture, _, cx| this.toggle_pip(cx))))
             .size_full()
             .flex()
             .bg(bg())
@@ -2315,7 +2351,14 @@ impl Livo {
                     .bg(hover())
                     // 悬停：描边变 accent 并加 shadow-card；不放大、不移动布局
                     .group_hover("card", |s| s.shadow(shadow_card()))
-                    .child(div().size_full().rounded(px(RADIUS_MD)).overflow_hidden().child(image))
+                    .child(div().size_full().rounded(px(RADIUS_MD)).overflow_hidden().child(
+                        // 加载完成后淡入 150ms；加载中只显示 hover 色块，「减弱动态效果」开启时直接显示
+                        if self.loaded_covers.contains(cover) && !reduce_motion() {
+                            div().size_full().child(image).with_animation(SharedString::from(format!("cover-{cover}")), Animation::new(Duration::from_millis(150)), |d, t| d.opacity(t)).into_any_element()
+                        } else {
+                            image.into_any_element()
+                        },
+                    ))
                     .children(top_left.map(|b| div().absolute().top(px(SPACE_2)).left(px(SPACE_2)).child(b)))
                     .children(bottom_left.map(|b| div().absolute().bottom(px(SPACE_2)).left(px(SPACE_2)).child(b)))
                     // 描边叠在封面上面：浅色封面在浅色底、深色封面在深色底都看得出边界
@@ -3087,10 +3130,18 @@ impl Render for Pip {
 
 impl Livo {
     /// 画中画（⌥⌘P）：视频移到屏幕右下角的置顶小窗，主窗口的画面位置留一句提示；再按一次或双击小窗回来。
-    /// shortcut: 离开直播间时画中画一起关掉，要做「主窗口离开直播间、小窗继续播」得把播放器从 Room 里拆出来
+    /// 小窗开着时主窗口可以离开直播间（房间挪到 pip_room 接着播）
     fn toggle_pip(&mut self, cx: &mut Context<Self>) {
         if let Some(h) = self.pip.take() {
-            h.update(cx, |_, window, _| window.remove_window()).ok();
+            // 回到主窗口：已经离开的直播间放回来（要在关小窗之前取回，关小窗会把它销毁）。
+            // 进别的直播间会先关画中画，所以这时主窗口一定不在直播间里
+            if let Some((site, room)) = self.pip_room.take() {
+                self.site_idx = site;
+                self.room = Some(room);
+                self.page_gen += 1;
+            }
+            // 推迟到当前事件处理完：双击小窗时正处在它自己的事件里，这时 update 它会失败
+            cx.defer(move |cx| h.update(cx, |_, window, _| window.remove_window()).unwrap_or(()));
             return cx.notify();
         }
         if self.room.as_ref().is_none_or(|r| r.urls.is_empty()) {
@@ -3114,6 +3165,8 @@ impl Livo {
                 cx.on_release(|this: &mut Pip, cx| {
                     this.livo.update(cx, |l, cx| {
                         l.pip = None;
+                        // 红灯关掉小窗：离开了的直播间就此停播
+                        l.pip_room = None;
                         cx.notify()
                     })
                     .ok();

@@ -30,10 +30,12 @@ pub fn system_reduce_motion() -> bool {
     }
 }
 
-/// 键盘焦点环：2px accent 实线环，外偏移 2px（先垫一圈底色当偏移）。只在键盘操作时出现，鼠标点完焦点会还给根视图
+/// 键盘焦点环：2px accent 实线环，外偏移 2px。只在键盘操作时出现，鼠标点完焦点会还给根视图。
+/// GPUI 的阴影会填满整个矩形（不像 CSS 只画在外面），所以先画 accent 外圈、再用底色盖住内圈，
+/// 透明背景的控件（侧栏项、图标按钮）才只露出一圈环而不是一整块紫色
 pub fn focus_ring() -> Vec<BoxShadow> {
     let ring = |color: Rgba, spread: f32| BoxShadow { color: color.into(), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(spread) };
-    vec![ring(bg(), 2.), ring(accent(), 4.)]
+    vec![ring(accent(), 4.), ring(bg(), 2.)]
 }
 
 /// 可用 Tab 键到达的控件：加入 tab 顺序，聚焦时画焦点环；回车 / 空格触发 on_click（GPUI 自带）
