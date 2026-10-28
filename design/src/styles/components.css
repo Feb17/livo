@@ -1,0 +1,233 @@
+/* LIVO 界面组件样式。颜色、间距、圆角都取自 tokens.css 的变量；只有白色滑块和破坏性按钮的白字写死。 */
+.lv-root { font-family: var(--font-ui); font-size: 13px; line-height: 20px; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+.lv-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.lv-stack { display: flex; flex-direction: column; gap: var(--space-2); }
+.lv-focus:focus-visible, .lv-btn:focus-visible, .lv-seg button:focus-visible, .lv-toggle:focus-visible, .lv-nav-item:focus-visible, .lv-search input:focus-visible, .lv-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Button */
+.lv-btn { font: inherit; font-weight: 600; height: var(--control-md); padding: 0 var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; white-space: nowrap; }
+.lv-btn:hover { background: var(--hover); }
+.lv-btn-primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); }
+.lv-btn-primary:hover { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
+.lv-btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.lv-btn-ghost:hover { background: var(--hover); color: var(--text); }
+.lv-btn-danger { background: var(--danger-fill); border-color: var(--danger-fill); color: #FFFFFF; }
+.lv-btn-lg { height: var(--control-lg); padding: 0 var(--space-4); }
+.lv-btn[disabled] { opacity: .45; cursor: default; }
+.lv-btn[disabled]:hover { background: var(--surface); }
+
+/* Badge */
+.lv-badge { display: inline-flex; align-items: center; gap: var(--space-1); height: 18px; padding: 0 6px; border-radius: var(--radius-xs); font-size: 11px; line-height: 14px; font-weight: 600; white-space: nowrap; }
+.lv-badge-live { background: var(--live-fill); color: var(--on-live); letter-spacing: .04em; }
+.lv-badge-quality { background: var(--accent-soft); color: var(--accent); }
+.lv-badge-neutral { background: var(--hover); color: var(--text-muted); }
+.lv-badge-media { background: var(--scrim); color: var(--on-media); }
+.lv-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--live); }
+.lv-dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: currentColor; flex: none; }
+.lv-status-off { color: var(--text-subtle); }
+
+/* SidebarItem */
+.lv-sidebar { width: var(--sidebar-width); background: var(--sidebar); padding: var(--space-3) var(--space-2); box-sizing: border-box; border-right: 1px solid var(--border); }
+.lv-nav-label { padding: var(--space-3) var(--space-3) var(--space-1); font-size: 11px; line-height: 14px; font-weight: 600; color: var(--text-subtle); }
+.lv-nav-item { display: flex; align-items: center; gap: var(--space-2); height: var(--control-md); padding: 0 var(--space-3); border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer; text-decoration: none; }
+.lv-nav-item:hover { background: var(--hover); color: var(--text); }
+.lv-nav-item[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.lv-nav-item svg { width: 16px; height: 16px; flex: none; }
+.lv-nav-item .lv-count { margin-left: auto; font-size: 11px; color: var(--text-subtle); font-weight: 500; }
+
+/* SearchField */
+.lv-search { display: flex; align-items: center; gap: var(--space-2); height: var(--control-lg); padding: 0 var(--space-3); border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border-strong); color: var(--text-subtle); box-sizing: border-box; }
+.lv-search:focus-within { border-color: var(--accent); color: var(--accent); }
+.lv-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; color: var(--text); }
+.lv-search input::placeholder { color: var(--text-subtle); }
+.lv-search input:focus-visible { outline: 0; }
+.lv-kbd { font-size: 11px; line-height: 14px; padding: 1px 5px; border-radius: var(--radius-xs); border: 1px solid var(--border); color: var(--text-subtle); font-family: var(--font-ui); }
+
+/* SegmentedControl */
+.lv-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--radius-sm); background: var(--hover); }
+.lv-seg button { font: inherit; height: 24px; padding: 0 var(--space-3); border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.lv-seg button[aria-pressed="true"] { background: var(--surface-raised); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
+
+/* Toggle */
+.lv-toggle { position: relative; width: 38px; height: 22px; border-radius: var(--radius-full); border: 0; padding: 0; background: var(--border-strong); cursor: pointer; flex: none; }
+.lv-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: var(--radius-full); background: #FFFFFF; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s ease-out; }
+.lv-toggle[aria-checked="true"] { background: var(--accent-fill); }
+.lv-toggle[aria-checked="true"]::after { transform: translateX(16px); }
+@media (prefers-reduced-motion: reduce) { .lv-toggle::after { transition: none; } }
+.lv-setting { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.lv-setting-sub { font-size: 12px; line-height: 18px; color: var(--text-muted); }
+
+/* RoomCard */
+.lv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr)); gap: var(--space-4); }
+.lv-card { display: flex; flex-direction: column; gap: var(--space-2); cursor: pointer; border-radius: var(--radius-md); text-decoration: none; color: inherit; }
+.lv-cover { position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius-md); background: var(--hover); overflow: hidden; border: 1px solid var(--border); box-sizing: border-box; }
+.lv-card:hover .lv-cover { box-shadow: var(--shadow-card); border-color: var(--accent); }
+.lv-cover .lv-badge { position: absolute; }
+.lv-cover .lv-tl { top: var(--space-2); left: var(--space-2); }
+.lv-cover .lv-bl { bottom: var(--space-2); left: var(--space-2); }
+.lv-card-title { font-size: 13px; line-height: 20px; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lv-card:hover .lv-card-title { color: var(--accent); }
+.lv-card-meta { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; line-height: 18px; color: var(--text-muted); }
+.lv-avatar { width: 18px; height: 18px; border-radius: var(--radius-full); background: var(--border-strong); flex: none; }
+
+/* DanmakuOverlay：播放器区域永远深色 */
+.lv-player { position: relative; aspect-ratio: 16 / 9; background: #000000; border-radius: var(--radius-md); overflow: hidden; color: var(--on-media); }
+.lv-danmaku { position: absolute; white-space: nowrap; font-size: 20px; line-height: 26px; font-weight: 600; color: #FFFFFF; paint-order: stroke fill; -webkit-text-stroke: 3px var(--danmaku-stroke); }
+.lv-controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--scrim); font-size: 12px; }
+.lv-timecode { font-family: var(--font-mono); font-size: 12px; line-height: 16px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Icon：Lucide 1.63.0，24 网格、2 线宽，跟随 currentColor */
+.lv-icon { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: middle; }
+.lv-icon-20 { width: 20px; height: 20px; }
+.lv-icon-btn { width: var(--control-md); height: var(--control-md); display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; flex: none; }
+.lv-icon-btn:hover { background: var(--hover); color: var(--text); }
+.lv-icon-btn[aria-pressed="true"] { color: var(--accent); }
+.lv-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lv-icon-btn[disabled] { color: var(--text-subtle); opacity: .6; cursor: default; background: transparent; }
+
+/* PlatformTag */
+.lv-platform { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 6px; border-radius: var(--radius-xs); font-size: 11px; line-height: 14px; font-weight: 600; white-space: nowrap; }
+.lv-platform::before { content: ""; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--pf); flex: none; }
+.lv-platform.bilibili { --pf: var(--platform-bilibili); background: var(--platform-bilibili-soft); color: var(--platform-bilibili-text); }
+.lv-platform.douyu { --pf: var(--platform-douyu); background: var(--platform-douyu-soft); color: var(--platform-douyu-text); }
+.lv-platform.huya { --pf: var(--platform-huya); background: var(--platform-huya-soft); color: var(--platform-huya-text); }
+.lv-pf-dot { width: 8px; height: 8px; border-radius: var(--radius-full); flex: none; display: inline-block; }
+.lv-pf-dot.bilibili { background: var(--platform-bilibili); } .lv-pf-dot.douyu { background: var(--platform-douyu); } .lv-pf-dot.huya { background: var(--platform-huya); }
+
+/* Cover：16:9、object-fit: cover、1px 内描边 */
+.lv-cover::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--hairline); pointer-events: none; }
+.lv-cover > img, .lv-cover > .lv-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+.lv-cover-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-subtle); }
+.lv-cover-offline > img, .lv-cover-offline > .lv-art { filter: grayscale(1); opacity: .45; }
+.lv-cover .lv-br { bottom: var(--space-2); right: var(--space-2); }
+
+/* Avatar */
+.lv-av { position: relative; width: 32px; height: 32px; border-radius: var(--radius-full); background: var(--hover); color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex: none; }
+.lv-av::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--hairline); }
+.lv-av > img, .lv-av > .lv-art { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.lv-av-sm { width: 24px; height: 24px; font-size: 11px; } .lv-av-lg { width: 40px; height: 40px; font-size: 15px; } .lv-av-xl { width: 56px; height: 56px; font-size: 20px; }
+.lv-av-live { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--live-fill); }
+
+/* Slider */
+.lv-slider { position: relative; display: flex; align-items: center; height: 20px; min-width: 80px; flex: 1; }
+.lv-slider-track { position: relative; flex: 1; height: 4px; border-radius: var(--radius-full); background: var(--border-strong); }
+.lv-slider-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; background: var(--accent-fill); }
+.lv-slider-thumb { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: var(--radius-full); background: #FFFFFF; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .3), 0 1px 3px rgba(0, 0, 0, .3); }
+.lv-slider-media .lv-slider-track { background: rgba(255, 255, 255, .28); }
+.lv-slider-media .lv-slider-buffer { position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; background: rgba(255, 255, 255, .45); }
+.lv-slider-media .lv-slider-thumb { width: 12px; height: 12px; margin: -6px 0 0 -6px; }
+.lv-field { display: flex; flex-direction: column; gap: var(--space-1); }
+.lv-field-head { display: flex; justify-content: space-between; font-size: 13px; }
+.lv-field-head span:last-child { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* Menu / PopupButton：菜单高亮用 accent-fill（macOS 菜单惯例） */
+.lv-popup { font: inherit; height: var(--control-md); padding: 0 var(--space-2) 0 var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; white-space: nowrap; }
+.lv-popup .lv-icon { color: var(--text-muted); width: 14px; height: 14px; }
+.lv-menu { min-width: 200px; padding: 5px; border-radius: var(--radius-md); background: var(--surface-raised); border: 1px solid var(--border); box-shadow: var(--shadow-popover); box-sizing: border-box; }
+.lv-menu-item { display: flex; align-items: center; gap: var(--space-2); height: 24px; padding: 0 var(--space-2) 0 6px; border-radius: 5px; color: var(--text); font-size: 13px; cursor: default; }
+.lv-menu-item .lv-check { width: 14px; height: 14px; visibility: hidden; }
+.lv-menu-item[aria-checked="true"] .lv-check { visibility: visible; }
+.lv-menu-item .lv-key { margin-left: auto; padding-left: var(--space-4); color: var(--text-subtle); font-size: 12px; }
+.lv-menu-item .lv-sub { margin-left: auto; padding-left: var(--space-4); color: var(--text-subtle); font-size: 12px; }
+.lv-menu-item:hover, .lv-menu-item.is-hover { background: var(--accent-fill); color: var(--on-accent); }
+.lv-menu-item:hover .lv-key, .lv-menu-item.is-hover .lv-key, .lv-menu-item:hover .lv-sub, .lv-menu-item.is-hover .lv-sub { color: var(--on-accent); }
+.lv-menu-item[aria-disabled="true"] { color: var(--text-subtle); }
+.lv-menu-item.danger { color: var(--danger); }
+.lv-menu-item.danger.is-hover { background: var(--danger-fill); color: #FFFFFF; }
+.lv-menu-sep { height: 1px; background: var(--border); margin: 5px 6px; }
+.lv-menu-label { padding: 4px 8px 2px 26px; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--text-subtle); }
+
+/* Dialog：macOS 警告框 */
+.lv-alert { width: 280px; padding: var(--space-6) var(--space-4) var(--space-4); border-radius: var(--radius-lg); background: var(--surface-raised); border: 1px solid var(--border); box-shadow: var(--shadow-popover); text-align: center; box-sizing: border-box; }
+.lv-alert img { width: 56px; height: 56px; display: block; margin: 0 auto var(--space-3); }
+.lv-alert h4 { margin: 0 0 var(--space-1); font-size: 13px; line-height: 18px; font-weight: 700; }
+.lv-alert p { margin: 0 0 var(--space-4); font-size: 12px; line-height: 17px; color: var(--text-muted); }
+.lv-alert .lv-btn { width: 100%; justify-content: center; }
+.lv-alert .lv-stack { gap: var(--space-2); }
+
+/* Banner / Toast */
+.lv-banner { display: flex; align-items: flex-start; gap: 10px; padding: 10px var(--space-3); border-radius: var(--radius-md); font-size: 13px; line-height: 20px; }
+.lv-banner > .lv-icon { margin-top: 2px; }
+.lv-banner b { display: block; font-weight: 600; }
+.lv-banner .lv-banner-body { flex: 1; min-width: 0; }
+.lv-banner .lv-banner-body span { color: var(--text-muted); font-size: 12px; line-height: 18px; }
+.lv-banner-error { background: var(--danger-soft); } .lv-banner-error > .lv-icon, .lv-banner-error b { color: var(--danger); }
+.lv-banner-warning { background: var(--warning-soft); } .lv-banner-warning > .lv-icon, .lv-banner-warning b { color: var(--warning); }
+.lv-banner-info { background: var(--accent-soft); } .lv-banner-info > .lv-icon, .lv-banner-info b { color: var(--accent); }
+.lv-toast { display: inline-flex; align-items: center; gap: var(--space-2); height: 36px; padding: 0 var(--space-4) 0 var(--space-3); border-radius: var(--radius-full); background: var(--surface-raised); border: 1px solid var(--border); box-shadow: var(--shadow-popover); font-size: 13px; }
+.lv-toast .lv-icon { color: var(--success); }
+
+/* Tooltip */
+.lv-tooltip { display: inline-flex; align-items: center; gap: var(--space-2); padding: 4px 8px; border-radius: 6px; background: var(--surface-raised); border: 1px solid var(--border); box-shadow: var(--shadow-popover); font-size: 12px; line-height: 16px; color: var(--text); white-space: nowrap; }
+.lv-tooltip .lv-kbd { border-color: var(--border-strong); }
+
+/* EmptyState */
+.lv-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-2); padding: var(--space-8) var(--space-6); }
+.lv-empty-icon { width: 56px; height: 56px; border-radius: var(--radius-full); background: var(--hover); color: var(--text-muted); display: flex; align-items: center; justify-content: center; margin-bottom: var(--space-1); }
+.lv-empty-icon .lv-icon { width: 24px; height: 24px; }
+.lv-empty h4 { margin: 0; font-size: 15px; line-height: 20px; font-weight: 600; }
+.lv-empty p { margin: 0 0 var(--space-2); font-size: 12px; line-height: 18px; color: var(--text-muted); max-width: 280px; }
+
+/* Skeleton */
+.lv-skel { background: var(--hover); border-radius: var(--radius-xs); animation: lv-pulse 1.4s ease-in-out infinite; }
+@keyframes lv-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .lv-skel { animation: none; } }
+
+/* AnchorRow */
+.lv-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); overflow: hidden; }
+.lv-anchor { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: var(--space-3); padding: 10px var(--space-4); border-bottom: 1px solid var(--border); cursor: pointer; }
+.lv-anchor:last-child { border-bottom: 0; }
+.lv-anchor:hover, .lv-anchor.is-hover { background: var(--hover); }
+.lv-anchor-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lv-anchor-name { display: flex; align-items: center; gap: var(--space-2); font-weight: 600; font-size: 13px; line-height: 18px; }
+.lv-anchor-title { font-size: 12px; line-height: 18px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-anchor-meta { font-size: 12px; color: var(--text-muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lv-anchor > .lv-icon { color: var(--text-subtle); }
+
+/* Chat */
+.lv-chat { width: var(--chat-width); display: flex; flex-direction: column; background: var(--sidebar); border-left: 1px solid var(--border); box-sizing: border-box; }
+.lv-chat-head { display: flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0 var(--space-2) 0 var(--space-4); border-bottom: 1px solid var(--border); }
+.lv-chat-head b { font-size: 13px; font-weight: 600; }
+.lv-chat-body { flex: 1; overflow: hidden; padding: var(--space-2) 0; display: flex; flex-direction: column; justify-content: flex-end; }
+.lv-msg { padding: 3px var(--space-4); font-size: 13px; line-height: 20px; word-break: break-word; }
+.lv-msg-name { color: var(--text-muted); font-weight: 600; margin-right: 6px; }
+.lv-msg-system { color: var(--text-subtle); font-size: 12px; line-height: 18px; }
+.lv-sc { margin: var(--space-1) var(--space-3); border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border); background: var(--surface-raised); }
+.lv-sc-head { display: flex; align-items: center; gap: var(--space-2); padding: 6px 10px; background: var(--accent-fill); color: var(--on-accent); font-size: 12px; line-height: 16px; font-weight: 600; }
+.lv-sc-head .lv-sc-price { margin-left: auto; font-variant-numeric: tabular-nums; }
+.lv-sc-body { padding: 8px 10px; font-size: 13px; line-height: 20px; }
+
+/* PlayerControls：悬浮在画面上的控制条，3 秒无操作自动隐藏 */
+.lv-pc { position: absolute; left: var(--space-3); right: var(--space-3); bottom: var(--space-3); display: flex; flex-direction: column; gap: 6px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); background: var(--scrim); color: var(--on-media); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.lv-pc-row { display: flex; align-items: center; gap: var(--space-1); }
+.lv-pc .lv-icon-btn { color: var(--on-media); width: 32px; height: 32px; }
+.lv-pc .lv-icon-btn:hover { background: rgba(255, 255, 255, .14); color: var(--on-media); }
+.lv-pc .lv-icon-btn[aria-pressed="true"] { color: var(--violet-300); }
+.lv-pc .lv-popup-media { font: inherit; font-size: 12px; font-weight: 600; height: 26px; padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, .3); background: transparent; color: var(--on-media); display: inline-flex; align-items: center; gap: 4px; }
+.lv-pc .lv-spacer { flex: 1; }
+.lv-pc .lv-golive { font: inherit; font-size: 12px; font-weight: 600; height: 22px; padding: 0 8px; border-radius: var(--radius-full); border: 0; background: rgba(255, 255, 255, .16); color: var(--on-media); }
+.lv-player-title { position: absolute; left: 0; right: 0; top: 0; padding: var(--space-3) var(--space-4) var(--space-8); font-size: 15px; font-weight: 600; color: var(--on-media); background: linear-gradient(rgba(0, 0, 0, .55), rgba(0, 0, 0, 0)); }
+
+/* KeybindingField */
+.lv-keyfield { min-width: 120px; height: var(--control-md); padding: 0 var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 13px; font-weight: 500; cursor: pointer; box-sizing: border-box; }
+.lv-keyfield.is-recording { border: 2px solid var(--accent); color: var(--accent); font-weight: 400; }
+.lv-keyfield.is-conflict { border-color: var(--danger); }
+.lv-keycap { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: var(--radius-xs); background: var(--hover); border: 1px solid var(--border); font-size: 12px; box-sizing: border-box; }
+
+/* 页面模板：macOS 窗口框架 */
+.lv-window { display: grid; grid-template-columns: var(--sidebar-width) 1fr; border-radius: 12px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-popover); position: relative; }
+.lv-window.no-sidebar { grid-template-columns: 1fr; }
+.lv-wside { background: var(--sidebar); border-right: 1px solid var(--border); padding: 0 var(--space-2) var(--space-3); display: flex; flex-direction: column; }
+.lv-traffic { display: flex; gap: 8px; height: var(--toolbar-height); align-items: center; padding-left: 12px; }
+.lv-traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
+.lv-traffic i:nth-child(1) { background: #FF5F57; } .lv-traffic i:nth-child(2) { background: #FEBC2E; } .lv-traffic i:nth-child(3) { background: #28C840; }
+.lv-wmain { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.lv-toolbar { height: var(--toolbar-height); flex: none; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-4) 0 var(--space-3); border-bottom: 1px solid var(--border); box-sizing: border-box; }
+.lv-toolbar-title { font-size: 15px; line-height: 20px; font-weight: 700; margin-left: var(--space-1); white-space: nowrap; }
+.lv-toolbar-sub { font-size: 12px; color: var(--text-muted); margin-left: var(--space-2); white-space: nowrap; }
+.lv-toolbar .lv-spacer { flex: 1; }
+.lv-toolbar .lv-search { height: var(--control-md); width: 240px; }
+.lv-wcontent { flex: 1; overflow: hidden; padding: var(--space-6); }
+.lv-section-head { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); }
+.lv-section-head h3 { margin: 0; font-size: 17px; line-height: 22px; font-weight: 600; }
+.lv-section-head span { font-size: 12px; color: var(--text-muted); }

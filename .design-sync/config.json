@@ -1,0 +1,80 @@
+{
+  "projectId": "05ae0508-fbbd-4d57-a8a6-d5b94525c670",
+  "shape": "package",
+  "pkg": "@livo/design",
+  "globalName": "Livo",
+  "entry": "./design/dist/index.js",
+  "buildCmd": "cd design && npm install && npm run build",
+  "cssEntry": "dist/livo.css",
+  "runtimeFontPrefixes": [
+    "SF Pro",
+    "SF Mono",
+    "PingFang",
+    "-apple-system",
+    "BlinkMacSystemFont",
+    "ui-monospace",
+    "Menlo"
+  ],
+  "provider": {
+    "component": "LivoProvider",
+    "props": {
+      "theme": "dark",
+      "style": {
+        "padding": 16
+      }
+    }
+  },
+  "overrides": {
+    "Cover": {
+      "cardMode": "column"
+    },
+    "RoomCard": {
+      "cardMode": "column"
+    },
+    "RoomGrid": {
+      "cardMode": "column"
+    },
+    "RoomInfo": {
+      "cardMode": "column"
+    },
+    "Banner": {
+      "cardMode": "column"
+    },
+    "Skeleton": {
+      "cardMode": "column"
+    },
+    "Icon": {
+      "cardMode": "column"
+    },
+    "Logo": {
+      "cardMode": "column"
+    },
+    "SearchField": {
+      "cardMode": "column"
+    },
+    "Slider": {
+      "cardMode": "column"
+    },
+    "Toggle": {
+      "cardMode": "column"
+    },
+    "ChatPanel": {
+      "cardMode": "column"
+    },
+    "Player": {
+      "cardMode": "column"
+    },
+    "PlayerControls": {
+      "cardMode": "column"
+    },
+    "Toolbar": {
+      "cardMode": "column"
+    },
+    "Window": {
+      "cardMode": "single",
+      "viewport": "1140x680",
+      "primaryStory": "Home"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}

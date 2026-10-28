@@ -1,0 +1,37 @@
+/* 组件样式补充：封面元信息、播放器画面、直播间信息栏、设置窗口 */
+.lv-card-meta { gap: 6px; }
+.lv-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-card-meta .lv-platform { margin-left: auto; }
+.lv-badge .lv-icon { width: 12px; height: 12px; }
+.lv-cover > .lv-art { background: linear-gradient(135deg, #3B4262, #1E2333); }
+.lv-player-art { position: absolute; inset: 0; background: radial-gradient(circle at 30% 35%, #3A4A6A 0, transparent 55%), radial-gradient(circle at 75% 70%, #4A3A2A 0, transparent 50%), #0B0D14; }
+.lv-player > video, .lv-player > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000000; }
+.lv-room-info { display: flex; align-items: center; gap: var(--space-3); padding: 14px var(--space-4); border-top: 1px solid var(--border); }
+.lv-room-info-main { min-width: 0; flex: 1; }
+.lv-room-info-title { font-size: 15px; line-height: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-room-info-meta { display: flex; align-items: center; gap: var(--space-2); margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+.lv-settings { width: 600px; border-radius: 12px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-popover); }
+.lv-settings-head { position: relative; display: flex; flex-direction: column; align-items: center; border-bottom: 1px solid var(--border); background: var(--sidebar); padding-top: 8px; }
+.lv-settings-head .lv-traffic { position: absolute; left: 0; top: 0; height: 38px; }
+.lv-settings-title { font-size: 13px; font-weight: 700; height: 22px; line-height: 22px; }
+.lv-settings-tabs { display: flex; gap: 4px; padding: 6px 0 8px; }
+.lv-settings-tab { font: inherit; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 64px; padding: 5px 0 4px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.lv-settings-tab[aria-selected="true"] { background: var(--hover); color: var(--accent); }
+.lv-settings-body { padding: var(--space-4) 20px 20px; display: flex; flex-direction: column; gap: var(--space-3); }
+.lv-group-title { font-size: 11px; font-weight: 600; color: var(--text-subtle); margin: 0 4px 6px; }
+.lv-group { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.lv-setting-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 20px; }
+.lv-setting-row:last-child { border-bottom: 0; }
+.lv-chat-body { gap: 0; }
+.lv-logo { display: inline-block; flex: none; }
+.lv-sc-head .lv-av { width: 18px; height: 18px; font-size: 10px; }
+.lv-keyfield { font-family: inherit; color: var(--text); }
+.lv-keyfield.is-recording { color: var(--accent); }
+.lv-golive .lv-icon { width: 12px; height: 12px; }
+.lv-golive { display: inline-flex; align-items: center; gap: 4px; }
+.lv-pc .lv-slider { min-width: 0; }
+.lv-wside { width: var(--sidebar-width); box-sizing: border-box; flex: none; }
+.lv-menu { width: max-content; }
+.lv-seg { flex: none; }
+.lv-seg button { white-space: nowrap; }
+.lv-toolbar .lv-search { flex: none; }
