@@ -1839,7 +1839,9 @@ impl Render for Livo {
             }))
             .on_action(|_: &menus::FocusNext, window, _| window.focus_next())
             .on_action(|_: &menus::FocusPrev, window, _| window.focus_prev())
-            // 鼠标点完控件把焦点还给根视图：焦点环只跟着键盘走（macOS 惯例），直接打字搜索、单键快捷键照常可用
+            // 焦点环只跟着键盘走（macOS 惯例）：鼠标按下时不让被点的控件抢焦点，否则按下那一瞬间会闪一下焦点环；
+            // Tab 聚焦过某个控件后再点别处，松开时把焦点还给根视图，直接打字搜索、单键快捷键照常可用
+            .capture_any_mouse_down(|_, window, _| window.prevent_default())
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, _| window.focus(&this.focus)))
             .when(self.can_go_back(), |d| d.on_action(cx.listener(|this, _: &menus::GoBack, _, cx| this.back(cx))))
             .when(self.can_go_forward(), |d| d.on_action(cx.listener(|this, _: &menus::GoForward, _, cx| this.forward(cx))))
