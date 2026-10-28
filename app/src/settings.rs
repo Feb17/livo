@@ -638,6 +638,8 @@ impl Render for SettingsWindow {
             .on_action(|_: &menus::CloseWindow, window, _| window.remove_window())
             .on_action(|_: &menus::FocusNext, window, _| window.focus_next())
             .on_action(|_: &menus::FocusPrev, window, _| window.focus_prev())
+            // 同主窗口：鼠标点完控件把焦点还给窗口根，焦点环只在 Tab 键操作时出现
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, _| window.focus(&this.focus)))
             .size_full()
             .flex()
             .flex_col()
