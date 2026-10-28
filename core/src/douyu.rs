@@ -37,7 +37,7 @@ fn rooms(v: &Value, page: u32) -> RoomPage {
     let items = arr(&v["data"]["rl"])
         .iter()
         .filter(|x| x["type"] == 1)
-        .map(|x| RoomItem { room_id: s(&x["rid"]), title: s(&x["rn"]), cover: s(&x["rs16"]), user_name: s(&x["nn"]), online: i(&x["ol"]) })
+        .map(|x| RoomItem { room_id: s(&x["rid"]), title: s(&x["rn"]), cover: s(&x["rs16"]), user_name: s(&x["nn"]), avatar: s(&x["av"]), online: i(&x["ol"]) })
         .collect();
     RoomPage { has_more: (page as i64) < i(&v["data"]["pgcnt"]), items }
 }
@@ -125,7 +125,7 @@ impl Douyu {
         }
         let items: Vec<_> = arr(&v["data"]["relateShow"])
             .iter()
-            .map(|x| RoomItem { room_id: s(&x["rid"]), title: s(&x["roomName"]), cover: s(&x["roomSrc"]), user_name: s(&x["nickName"]), online: hot_num(&s(&x["hot"])) })
+            .map(|x| RoomItem { room_id: s(&x["rid"]), title: s(&x["roomName"]), cover: s(&x["roomSrc"]), user_name: s(&x["nickName"]), avatar: s(&x["avatar"]), online: hot_num(&s(&x["hot"])) })
             .collect();
         Ok(RoomPage { has_more: !items.is_empty(), items })
     }
@@ -167,6 +167,7 @@ impl Douyu {
             user_avatar: s(&r["owner_avatar"]),
             online: i(&r["room_biz_all"]["hot"]),
             live: r["show_status"] == 1 && r["videoLoop"] != 1,
+            start_time: i(&r["show_time"]),
             danmaku: DanmakuArgs::Douyu(real.clone()),
             room_id: real,
         })

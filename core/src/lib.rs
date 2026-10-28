@@ -12,6 +12,8 @@ pub struct RoomItem {
     pub title: String,
     pub cover: String,
     pub user_name: String,
+    /// 主播头像，接口没给时为空（界面显示名字首字）
+    pub avatar: String,
     pub online: i64,
 }
 
@@ -54,6 +56,8 @@ pub struct RoomDetail {
     pub user_avatar: String,
     pub online: i64,
     pub live: bool,
+    /// 本场开播时间（Unix 秒），没开播或接口没给时为 0；界面显示开播时长
+    pub start_time: i64,
     pub danmaku: DanmakuArgs,
 }
 

@@ -9,9 +9,9 @@ actions!(
     livo,
     [
         Quit, Hide, HideOthers, ShowAll, About, CheckUpdate, Settings, Help, ReportIssue,
-        EditCut, EditCopy, EditPaste,
-        ShowRecommend, ShowCategory, ShowFollow, ShowHistory, ToggleFullScreen,
-        TogglePause, ToggleMute, VolumeUp, VolumeDown, SeekBack, SeekForward, ToggleDanmaku, ToggleChat, ToggleStats, Refresh, ToggleFollow, CloseRoom,
+        EditCut, EditCopy, EditPaste, FocusSearch,
+        ShowRecommend, ShowCategory, ShowFollow, ShowHistory, ToggleFullScreen, GoBack, GoForward, ToggleSidebar, FocusNext, FocusPrev,
+        TogglePause, ToggleMute, VolumeUp, VolumeDown, SeekBack, SeekForward, ToggleDanmaku, ToggleChat, ToggleStats, PictureInPicture, Refresh, ToggleFollow, CopyLink, CloseRoom,
         Minimize, Zoom, CloseWindow,
     ]
 );
@@ -32,6 +32,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-x", EditCut, None),
         KeyBinding::new("cmd-c", EditCopy, None),
         KeyBinding::new("cmd-v", EditPaste, None),
+        KeyBinding::new("cmd-f", FocusSearch, None),
         KeyBinding::new("cmd-1", ShowRecommend, None),
         KeyBinding::new("cmd-2", ShowCategory, None),
         KeyBinding::new("cmd-3", ShowFollow, None),
@@ -39,7 +40,16 @@ pub fn init(cx: &mut App) {
         // 菜单项由 AppKit 自己加在窗口菜单里（“进入/退出全屏幕”），这里只保证快捷键
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
         KeyBinding::new("cmd-r", Refresh, None),
+        KeyBinding::new("cmd-[", GoBack, None),
+        KeyBinding::new("cmd-]", GoForward, None),
+        KeyBinding::new("ctrl-cmd-s", ToggleSidebar, None),
+        KeyBinding::new("alt-cmd-p", PictureInPicture, None),
+        KeyBinding::new("alt-cmd-d", ToggleChat, None),
+        // 键盘在控件间移动焦点（焦点环见 ui::focus_ring）
+        KeyBinding::new("tab", FocusNext, None),
+        KeyBinding::new("shift-tab", FocusPrev, None),
         KeyBinding::new("cmd-d", ToggleFollow, None),
+        KeyBinding::new("shift-cmd-c", CopyLink, None),
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
     ]);
@@ -61,22 +71,30 @@ pub fn init(cx: &mut App) {
                 MenuItem::action("退出 Livo", Quit),
             ],
         },
-        // 唯一的文本框是搜索关键词，没有选区，剪切/拷贝针对整个关键词
+        // 唯一的文本框是搜索关键词，没有选区，剪切/拷贝针对整个关键词；⌘F 让工具栏的搜索框进入输入状态
         Menu {
             name: "编辑".into(),
             items: vec![
                 MenuItem::os_action("剪切", EditCut, OsAction::Cut),
                 MenuItem::os_action("拷贝", EditCopy, OsAction::Copy),
                 MenuItem::os_action("粘贴", EditPaste, OsAction::Paste),
+                MenuItem::separator(),
+                MenuItem::action("搜索", FocusSearch),
             ],
         },
         Menu {
             name: "显示".into(),
             items: vec![
-                MenuItem::action("热门推荐", ShowRecommend),
-                MenuItem::action("全部分类", ShowCategory),
+                MenuItem::action("推荐", ShowRecommend),
+                MenuItem::action("分区", ShowCategory),
                 MenuItem::action("我的关注", ShowFollow),
                 MenuItem::action("观看记录", ShowHistory),
+                MenuItem::separator(),
+                MenuItem::action("后退", GoBack),
+                MenuItem::action("前进", GoForward),
+                MenuItem::action("刷新", Refresh),
+                MenuItem::separator(),
+                MenuItem::action("隐藏/显示侧栏", ToggleSidebar),
             ],
         },
         Menu {
@@ -91,11 +109,12 @@ pub fn init(cx: &mut App) {
                 MenuItem::action("调低音量", VolumeDown),
                 MenuItem::separator(),
                 MenuItem::action("显示/隐藏弹幕", ToggleDanmaku),
-                MenuItem::action("收起/展开聊天区", ToggleChat),
-                MenuItem::action("显示/隐藏调试信息", ToggleStats),
+                MenuItem::action("收起/展开弹幕栏", ToggleChat),
+                MenuItem::action("画中画", PictureInPicture),
+                MenuItem::action("显示/隐藏统计信息", ToggleStats),
                 MenuItem::separator(),
-                MenuItem::action("刷新直播间", Refresh),
                 MenuItem::action("关注/取消关注", ToggleFollow),
+                MenuItem::action("复制直播间链接", CopyLink),
                 MenuItem::action("离开直播间", CloseRoom),
             ],
         },

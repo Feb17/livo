@@ -21,7 +21,8 @@ pub struct DanmakuStyle {
 
 impl Default for DanmakuStyle {
     fn default() -> Self {
-        Self { font: 16., opacity: 1., secs: 10., area: 0.8, enabled: true }
+        // 设计系统 danmaku 样式 20/26；显示区域默认上方 3/4，不压住底部控制条
+        Self { font: 20., opacity: 1., secs: 10., area: 0.75, enabled: true }
     }
 }
 
@@ -101,7 +102,7 @@ pub const KEY_ACTIONS: [(&str, &str, &str); 11] = [
     ("danmaku", "显示/隐藏弹幕", "d"),
     ("mute", "静音/取消静音", "m"),
     ("refresh", "刷新直播间", "r"),
-    ("chat", "收起/展开聊天区", "c"),
+    ("chat", "收起/展开弹幕栏", "c"),
     ("volume_up", "调高音量", "up"),
     ("volume_down", "调低音量", "down"),
     ("pause", "暂停/继续", "space"),
@@ -115,9 +116,9 @@ fn default_keys() -> BTreeMap<String, String> {
 }
 
 /// 主页（侧边栏）页面的默认顺序，第一个是启动页
-pub const HOME_PAGES: [(&str, &str); 3] = [("recommend", "热门推荐"), ("follow", "我的关注"), ("category", "全部分类")];
+pub const HOME_PAGES: [(&str, &str); 3] = [("recommend", "推荐"), ("follow", "我的关注"), ("category", "分区")];
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Follow {
     /// Site::id()
     pub site: String,
@@ -126,6 +127,9 @@ pub struct Follow {
     pub face: String,
     pub title: String,
     pub cover: String,
+    /// 最近一次查到在播的时间（Unix 秒），关注页显示「x 前开播过」；0 为没见过开播
+    #[serde(default)]
+    pub last_live: u64,
 }
 
 /// 观看记录（同原项目 History，id = 平台_房间号）
@@ -162,6 +166,8 @@ pub struct Store {
     pub auto_update: bool,
     /// 也接收预发行版本（目前发布的都是预发行）
     pub update_beta: bool,
+    /// 主窗口上次的位置和尺寸 [x, y, 宽, 高]（逻辑像素），启动时恢复
+    pub window: Option<[f32; 4]>,
 }
 
 impl Default for Store {
@@ -180,6 +186,7 @@ impl Default for Store {
             bili: BiliAccount::default(),
             auto_update: true,
             update_beta: true,
+            window: None,
         }
     }
 }
@@ -259,7 +266,7 @@ mod tests {
         let p = dir.join("settings.json");
         let mut s = Store::default();
         s.danmaku.font = 24.;
-        s.follows.push(Follow { site: "huya".into(), room_id: "660000".into(), user_name: "a".into(), face: String::new(), title: String::new(), cover: String::new() });
+        s.follows.push(Follow { site: "huya".into(), room_id: "660000".into(), user_name: "a".into(), face: String::new(), title: String::new(), cover: String::new(), ..Default::default() });
         s.save_to(&p).unwrap();
         assert_eq!(Store::load_from(&p), s);
         assert!(Store::load_from(&p).is_followed("huya", "660000"));

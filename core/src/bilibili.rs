@@ -68,12 +68,23 @@ pub(crate) fn urlenc(v: &str) -> String {
         .collect()
 }
 
+/// 列表接口的头像在 face（完整地址），搜索接口在 uface（省略协议）；缩到 100px 宽
+fn avatar_from(item: &Value) -> String {
+    let face = [s(&item["face"]), s(&item["uface"])].into_iter().find(|f| !f.is_empty()).unwrap_or_default();
+    match face {
+        f if f.is_empty() => f,
+        f if f.starts_with("//") => format!("https:{f}@100w.jpg"),
+        f => format!("{f}@100w.jpg"),
+    }
+}
+
 fn room_from(item: &Value, cover: String) -> RoomItem {
     RoomItem {
         room_id: s(&item["roomid"]),
         title: s(&item["title"]),
         cover,
         user_name: s(&item["uname"]),
+        avatar: avatar_from(item),
         online: i(&item["online"]),
     }
 }
@@ -355,6 +366,7 @@ impl BiliBili {
             user_avatar: format!("{}@100w.jpg", s(&info["anchor_info"]["base_info"]["face"])),
             online: i(&ri["online"]),
             live: i(&ri["live_status"]) == 1,
+            start_time: i(&ri["live_start_time"]),
             danmaku: DanmakuArgs::BiliBili(BiliDanmakuArgs {
                 room_id: real.parse().unwrap_or(0),
                 uid: self.uid,
@@ -439,6 +451,14 @@ mod tests {
     fn int_parsing_accepts_floats_and_strings() {
         let v: Value = serde_json::from_str(r#"[1, 1.0, 3.7274124E7, "42", null]"#).unwrap();
         assert_eq!([i(&v[0]), i(&v[1]), i(&v[2]), i(&v[3]), i(&v[4])], [1, 1, 37274124, 42, 0]);
+    }
+
+    #[test]
+    fn avatar_takes_face_then_uface() {
+        let v: Value = serde_json::from_str(r#"[{"face":"https://i0.hdslb.com/a.jpg"},{"uface":"//i0.hdslb.com/b.jpg"},{}]"#).unwrap();
+        assert_eq!(avatar_from(&v[0]), "https://i0.hdslb.com/a.jpg@100w.jpg");
+        assert_eq!(avatar_from(&v[1]), "https://i0.hdslb.com/b.jpg@100w.jpg");
+        assert_eq!(avatar_from(&v[2]), "");
     }
 
     #[test]
